@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.tsbuildinfo
+.DS_Store
+
+# 本地数据：SQLite、快照、事实库（事实库是独立私有 git 仓库，见 docs/DESIGN.md §7.1）
+data/
+
+# 凭据永不入库
+.env
+.env.*

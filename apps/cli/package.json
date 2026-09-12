@@ -1,0 +1,12 @@
+{
+  "name": "@assit/cli",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "bin": { "assit": "./src/index.ts" },
+  "dependencies": {
+    "@assit/core": "workspace:*",
+    "@assit/contract": "workspace:*",
+    "commander": "^12.1.0"
+  }
+}

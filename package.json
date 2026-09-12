@@ -1,0 +1,24 @@
+{
+  "name": "assit-interview",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "assit": "tsx apps/cli/src/index.ts",
+    "typecheck": "tsc -b --force",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "@assit/contract": "workspace:*",
+    "@assit/core": "workspace:*",
+    "@types/better-sqlite3": "^7.6.11",
+    "@types/node": "^22.7.5",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.3"
+  }
+}
