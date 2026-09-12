@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { AppContext } from '../preload/index.js';
+import { Interview } from './panels/Interview.js';
 import { JobPool } from './panels/JobPool.js';
 import { Today } from './panels/Today.js';
 
-type PanelId = 'today' | 'jobs';
+type PanelId = 'today' | 'jobs' | 'interview';
 
 /**
  * 六个面板是最终形态，但按阶段落地（见 docs/DESIGN.md §14）。
@@ -13,7 +14,6 @@ type PanelId = 'today' | 'jobs';
 const PLANNED = [
   { id: 'apply', label: '投递管线', stage: 'M2' },
   { id: 'facts', label: '事实库 & 简历', stage: '按需（现在用 CLI）' },
-  { id: 'interview', label: '面试训练', stage: 'M4' },
   { id: 'drill', label: '题库 & 复习', stage: 'M5' },
 ];
 
@@ -22,6 +22,7 @@ export function App(): JSX.Element {
   const [ctx, setCtx] = useState<AppContext | null>(null);
   const [ctxError, setCtxError] = useState<string | null>(null);
   const [alerts, setAlerts] = useState(0);
+  const [recording, setRecording] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 
   const loadCtx = useCallback(() => {
@@ -54,6 +55,17 @@ export function App(): JSX.Element {
             onClick={() => setPanel('jobs')}
           >
             <span>岗位池</span>
+          </button>
+          <button
+            className={`nav-item ${panel === 'interview' ? 'active' : ''}`}
+            onClick={() => setPanel('interview')}
+          >
+            <span>面试录音</span>
+            {/*
+              录制中的红点是全局的，不只在那一页。
+              一个你忘了它在录的录音器是个事故 —— DESIGN §13.3。
+            */}
+            {recording && <span className="rec-dot" title="正在录制" />}
           </button>
 
           <div className="nav-section">尚未落地</div>
@@ -118,6 +130,11 @@ export function App(): JSX.Element {
           <Today key={`t${reloadKey}`} onAlerts={setAlerts} onGoJobs={() => setPanel('jobs')} onChanged={refreshAll} />
         )}
         {panel === 'jobs' && <JobPool key={`j${reloadKey}`} onChanged={refreshAll} />}
+        {/*
+          面试录音刻意不带 key={reloadKey}：其它面板重挂一次只是重新查一遍库，
+          这一个重挂会**把正在进行的录音打断**。
+        */}
+        {panel === 'interview' && <Interview onRecordingChange={setRecording} />}
       </main>
     </div>
   );

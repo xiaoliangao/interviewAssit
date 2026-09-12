@@ -27,6 +27,17 @@ const api = {
   sources: () => invoke<SourceHealth[]>('sources:health'),
   collect: (sourceId?: string) => invoke<SourceRunResult[]>('sources:collect', sourceId),
   score: (force?: boolean) => invoke<{ count: number; rubricVersion: string }>('score:run', force),
+  // 面试录音。chunk 用 send 不用 invoke —— 每 100ms 一帧，不需要往返确认
+  recStart: (input: { label: string; jobId?: string | null; sources?: string }) =>
+    invoke<RecordingHandle>('rec:start', input),
+  recChunk: (id: string, pcm: ArrayBuffer) => ipcRenderer.send('rec:chunk', id, pcm),
+  recStop: (id: string) => invoke<StoppedRecording>('rec:stop', id),
+  recLive: () => invoke<RecordingHandle[]>('rec:live'),
+  recList: () => invoke<RecordingRow[]>('rec:list'),
+  recKeep: (id: string, keep: boolean) => invoke<boolean>('rec:keep', id, keep),
+  recLinkJob: (id: string, jobId: string | null) => invoke<boolean>('rec:link-job', id, jobId),
+  recDeleteAudio: (id: string) => invoke<boolean>('rec:delete-audio', id),
+
   openExternal: (url: string) => invoke<boolean>('shell:open', url),
   reveal: (p: string) => invoke<boolean>('shell:reveal', p),
 };
@@ -149,6 +160,43 @@ export interface SourceRunResult {
   rejected: { reason: string; sample?: string }[];
   error?: string;
   durationMs: number;
+}
+
+export interface RecordingHandle {
+  id: string;
+  file: string;
+  startedAt: string;
+  format: { sampleRate: number; channels: number; bitsPerSample: number };
+}
+
+export interface StoppedRecording {
+  id: string;
+  sha256: string;
+  file: string;
+  bytes: number;
+  durationSec: number;
+  deduped: boolean;
+}
+
+export interface RecordingRow {
+  id: string;
+  jobId: string | null;
+  label: string;
+  status: string;
+  sources: string;
+  consentConfirmedAt: string;
+  startedAt: string;
+  stoppedAt: string | null;
+  durationSec: number;
+  bytes: number;
+  sha256: string | null;
+  file: string | null;
+  purgeAfter: string | null;
+  keep: boolean;
+  hasTranscript: boolean;
+  note: string | null;
+  error: string | null;
+  fileExists: boolean;
 }
 
 export interface TodaySummary {

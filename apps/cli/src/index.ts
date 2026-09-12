@@ -20,16 +20,20 @@ import {
   loadFactsOrThrow,
   loadReposOnly,
   loadRubric,
+  deleteRecordingAudio,
+  listRecordings,
   loadRegistry,
   loadSources,
   openDb,
   pastedPosting,
   paths,
+  pruneRecordings,
   persistExplanation,
   persistScan,
   proposeClaims,
   registryStats,
   registryToSourcesYaml,
+  recoverStale,
   reparseJobs,
   rubricReview,
   runSource,
@@ -761,6 +765,55 @@ program
     );
     console.log(C.dim('  「未验证」不是缺陷，是诚实 —— 没试过的路径就不该写成能走。'));
     console.log(C.dim('  下一步：assit registry --emit-sources'));
+  });
+
+program
+  .command('recordings')
+  .description('面试录音：清单与保留期。录制本身在桌面端（需要浏览器音频 API）')
+  .option('--prune', '立即执行过期清理', false)
+  .option('--delete <id>', '删掉某一份的音频（记录行保留）')
+  .action((opts) => {
+    const db = openDb();
+    try {
+      // 和桌面端启动时做的是同一件事：上次崩溃留下的半截录音要么入库要么判失败
+      const rec = recoverStale(db);
+      if (rec.recovered.length) console.log(C.yellow(`恢复了 ${rec.recovered.length} 份上次异常退出的录音`));
+      if (rec.failed.length) console.log(C.red(`${rec.failed.length} 份没有留下可用音频`));
+
+      if (opts.delete) {
+        const ok = deleteRecordingAudio(db, opts.delete);
+        console.log(ok ? C.green('音频已删，记录行保留') : C.yellow('没有找到可删的音频'));
+        return;
+      }
+      if (opts.prune) {
+        const r = pruneRecordings(db);
+        console.log(`清理 ${r.purged.length} 份过期音频，跳过 ${r.keptByFlag} 份已标保留`);
+        return;
+      }
+
+      const rows = listRecordings(db);
+      if (rows.length === 0) {
+        console.log('还没有录音。');
+        console.log(C.dim('  录制在桌面端：pnpm desktop → 面试录音。'));
+        console.log(C.dim('  CLI 录不了 —— 采集用的是浏览器的音频 API，不是 Node 能做的事。'));
+        return;
+      }
+      console.log(C.bold('开始时间            时长      大小      状态      名称'));
+      for (const r of rows) {
+        const dur = `${String(Math.floor(r.durationSec / 60)).padStart(2, '0')}:${String(Math.floor(r.durationSec % 60)).padStart(2, '0')}`;
+        const size = r.bytes > 1 << 20 ? `${(r.bytes / (1 << 20)).toFixed(1)}MB` : `${Math.round(r.bytes / 1024)}KB`;
+        const state = !r.fileExists ? C.dim('音频已删') : r.keep ? C.green('永久保留') : `到期 ${r.purgeAfter?.slice(5, 10) ?? '—'}`;
+        console.log(
+          `${r.startedAt.slice(0, 16).replace('T', ' ')}  ${dur.padStart(6)}  ${size.padStart(8)}  ${state.padEnd(9)} ${r.label}`,
+        );
+        if (r.error) console.log(C.yellow(`    ${r.error}`));
+      }
+      console.log('');
+      console.log(C.dim('  音频默认 30 天后自动删，记录行永远保留 —— 行里不含音频内容，'));
+      console.log(C.dim('  但「哪天、哪个岗位、录了多久」正是复盘时唯一还需要的东西。'));
+    } finally {
+      db.close();
+    }
   });
 
 program

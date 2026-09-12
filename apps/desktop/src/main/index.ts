@@ -87,18 +87,41 @@ function createWindow(): BrowserWindow {
       // 每一步都读回正文，确认不是空树。
       const script = `(async () => {
         const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+        const go = (name) => {
+          const b = [...document.querySelectorAll('.nav-item')].find(x => x.textContent.includes(name));
+          b && b.click();
+        };
         const out = {};
         await sleep(1200);
-        out.today = document.body.innerText;
-        const nav = [...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('岗位池'));
-        nav && nav.click();
+        const main = () => document.querySelector('main')?.innerText ?? document.body.innerText;
+        out.today = main();
+
+        go('岗位池');
         await sleep(1500);
-        out.jobs = document.body.innerText;
+        out.jobs = main();
         out.rows = document.querySelectorAll('tbody tr').length;
         const row = document.querySelector('tbody tr');
         row && row.click();
         await sleep(1200);
-        out.drawer = document.querySelector('.drawer')?.innerText ?? '(抽屉未打开)';
+        out.drawer = document.querySelector('.drawer')?.innerText ?? '(无岗位，未开抽屉)';
+        document.querySelector('.drawer-backdrop')?.click();
+        await sleep(300);
+
+        go('面试录音');
+        await sleep(1200);
+        // rubric 报错横幅也在 main 里且很长，取尾部才看得到面板正文
+        out.interview = main().slice(-700);
+        // 同意勾选框是这一屏的闸门：没勾上「开始录制」必须是禁用的
+        const consent = document.querySelector('.consent input');
+        const startBtn = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '开始录制');
+        out.hasConsent = Boolean(consent);
+        out.startDisabledBeforeConsent = startBtn ? startBtn.disabled : null;
+        if (consent) {
+          consent.click();
+          await sleep(200);
+          const after = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '开始录制');
+          out.startDisabledAfterConsent = after ? after.disabled : null;
+        }
         return JSON.stringify(out);
       })()`;
       setTimeout(() => {
@@ -108,8 +131,18 @@ function createWindow(): BrowserWindow {
             const r = JSON.parse(raw) as Record<string, string | number>;
             log(`ui-check 今日 ${String(r.today).length} 字符`);
             log(`ui-check 岗位池 ${r.rows} 行\n${String(r.jobs).slice(0, 700)}`);
-            log(`ui-check 详情抽屉：\n${String(r.drawer).slice(0, 900)}`);
-            app.exit(Number(r.rows) > 0 ? 0 : 1);
+            log(`ui-check 详情抽屉：\n${String(r.drawer).slice(0, 600)}`);
+            log(`ui-check 面试录音（main 尾部）：\n${String(r.interview)}`);
+            log(
+              `ui-check 同意闸门：勾选框=${r.hasConsent} ` +
+                `勾选前禁用=${r.startDisabledBeforeConsent} 勾选后禁用=${r.startDisabledAfterConsent}`,
+            );
+            // 岗位数可以为 0（新库就是 0），但同意闸门必须存在且默认拦住。
+            const gateOk =
+              r.hasConsent === true &&
+              r.startDisabledBeforeConsent === true &&
+              r.startDisabledAfterConsent === false;
+            app.exit(gateOk ? 0 : 1);
           })
           .catch((e: Error) => {
             log(`ui-check 失败：${e.message}`);

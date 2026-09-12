@@ -2,6 +2,7 @@ export * from './db/index.js';
 export * from './util/hash.js';
 export * from './util/paths.js';
 export * from './artifacts.js';
+export * from './audio/index.js';
 export * from './facts/index.js';
 export * from './models/index.js';
 export * from './dedup/index.js';

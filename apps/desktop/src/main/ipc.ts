@@ -1,18 +1,28 @@
 import { ipcMain, shell } from 'electron';
 import {
+  appendChunk,
   currentProfileVersion,
   facets,
   ignoreJob,
   jobDetail,
   loadRubric,
+  listRecordings,
+  liveRecordings,
   loadSources,
   openDb,
   paths,
+  pruneRecordings,
   queryJobs,
+  recoverStale,
   runSource,
   scoreAllJobs,
+  setRecordingJob,
+  setRecordingKeep,
   sourceHealth,
+  startRecording,
+  stopRecording,
   todaySummary,
+  deleteRecordingAudio,
   unignoreJob,
   validateFacts,
   type Db,
@@ -62,6 +72,19 @@ function handle<T>(channel: string, fn: (...args: any[]) => T | Promise<T>): voi
 }
 
 export function registerIpc(): void {
+  // 启动先收拾上次的残局：崩溃留下的半截录音入库，过期的音频删掉。
+  // 放在这里而不是懒加载，是因为这两件事都不该等到用户点进某个面板才发生。
+  try {
+    const r = recoverStale(getDb());
+    if (r.recovered.length || r.failed.length) {
+      console.log(`[rec] 恢复 ${r.recovered.length} 份，判定失败 ${r.failed.length} 份`);
+    }
+    const p = pruneRecordings(getDb());
+    if (p.purged.length) console.log(`[rec] 过期清理 ${p.purged.length} 份音频`);
+  } catch (e) {
+    console.error('[rec] 启动清理失败：', (e as Error).message);
+  }
+
   handle('app:context', () => {
     const facts = validateFacts();
     let rubricFile: string | null = null;
@@ -138,6 +161,40 @@ export function registerIpc(): void {
     });
     return { count: scored.length, rubricVersion: loaded.version };
   });
+
+  // ── 面试录音（DESIGN §8.5）─────────────────────────────────────────────
+  //
+  // 采集在渲染进程（getDisplayMedia / getUserMedia 是 Web API），
+  // 落盘在主进程。PCM 分片经 IPC 过来，**不经过任何模型、不出本机**。
+
+  handle('rec:start', (input: { label: string; jobId?: string | null; sources?: string }) =>
+    // 同意时间戳在主进程盖章，不接受渲染层传进来的值 ——
+    // 它是一条将来可能要拿出来说事的记录，不能由被它约束的那一方自己填。
+    startRecording(getDb(), { ...input, consentConfirmedAt: new Date().toISOString() }),
+  );
+
+  // chunk 走 ipcMain.on 而不是 handle：一场面试每 100ms 一帧，
+  // 逐帧等一个 ack 毫无意义，而且会把渲染层的音频回调拖慢。
+  ipcMain.on('rec:chunk', (_e, id: string, chunk: ArrayBuffer) => {
+    try {
+      appendChunk(id, Buffer.from(chunk));
+    } catch {
+      // 会话已停止时残留的几帧会走到这里。录音已经收尾了，丢掉是对的。
+    }
+  });
+
+  handle('rec:stop', (id: string) => stopRecording(getDb(), id));
+  handle('rec:live', () => liveRecordings());
+  handle('rec:list', () => listRecordings(getDb()));
+  handle('rec:keep', (id: string, keep: boolean) => {
+    setRecordingKeep(getDb(), id, keep);
+    return true;
+  });
+  handle('rec:link-job', (id: string, jobId: string | null) => {
+    setRecordingJob(getDb(), id, jobId);
+    return true;
+  });
+  handle('rec:delete-audio', (id: string) => deleteRecordingAudio(getDb(), id));
 
   handle('shell:open', async (url: string) => {
     if (!/^https?:\/\//i.test(url)) throw new Error('只允许打开 http(s) 链接');

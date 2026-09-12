@@ -167,3 +167,46 @@ td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: now
 .err { color: var(--bad); white-space: pre-wrap; }
 .spin { color: var(--muted); }
 a { color: var(--accent); }
+
+/* ── 面试录音 ─────────────────────────────────────────────────────────── */
+
+.rec-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e74c3c;
+  animation: rec-pulse 1.4s ease-in-out infinite;
+}
+@keyframes rec-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.25; }
+}
+/* 录制中不要动画的人也不少，而且这是个会一直跳的东西 */
+@media (prefers-reduced-motion: reduce) {
+  .rec-dot { animation: none; }
+}
+
+.meter {
+  height: 8px;
+  background: #e8eaed;
+  border-radius: 4px;
+  overflow: hidden;
+}
+.meter-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #27ae60, #f1c40f 70%, #e74c3c);
+  transition: width 80ms linear;
+}
+
+.consent {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin: 12px 0;
+  padding: 10px 12px;
+  background: #fffbe6;
+  border: 1px solid #f0d98a;
+  border-radius: 6px;
+  line-height: 1.5;
+}
+.consent input { margin-top: 3px; }
