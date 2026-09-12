@@ -285,21 +285,48 @@ const FACTS_README = `# 事实库
 改完跑 \`assit validate\`。
 `;
 
-export function scaffold(force: boolean): string[] {
-  const files: [string, string][] = [
-    [paths.profile, PROFILE],
-    [path.join(paths.claimsDir, 'claim-example-001.json'), CLAIM],
-    [paths.reposFile, REPOS],
-    [path.join(paths.facts, 'sources.yaml'), SOURCES],
-    [path.join(paths.rubricDir, 'v1.yaml'), RUBRIC],
-    [path.join(paths.facts, 'README.md'), FACTS_README],
-  ];
+/** 模板名 → 落到哪个文件。`--only` 用这些名字。 */
+const TEMPLATES: Record<string, () => [string, string]> = {
+  profile: () => [paths.profile, PROFILE],
+  claim: () => [path.join(paths.claimsDir, 'claim-example-001.json'), CLAIM],
+  repos: () => [paths.reposFile, REPOS],
+  sources: () => [path.join(paths.facts, 'sources.yaml'), SOURCES],
+  rubric: () => [path.join(paths.rubricDir, 'v1.yaml'), RUBRIC],
+  readme: () => [path.join(paths.facts, 'README.md'), FACTS_README],
+};
+
+export const TEMPLATE_NAMES = Object.keys(TEMPLATES);
+
+export interface ScaffoldResult {
+  created: string[];
+  /** 覆盖前备份到了哪里。事实库是手写的，覆盖它必须留后路 */
+  backedUp: [string, string][];
+}
+
+export function scaffold(force: boolean, only?: string[]): ScaffoldResult {
+  const names = only?.length ? only : TEMPLATE_NAMES;
+  for (const n of names) {
+    if (!TEMPLATES[n]) {
+      throw new Error(`没有叫 ${n} 的模板。可选：${TEMPLATE_NAMES.join(' / ')}`);
+    }
+  }
+
   const created: string[] = [];
-  for (const [file, content] of files) {
-    if (fs.existsSync(file) && !force) continue;
+  const backedUp: [string, string][] = [];
+  for (const n of names) {
+    const [file, content] = TEMPLATES[n]!();
+    const exists = fs.existsSync(file);
+    if (exists && !force) continue;
+    if (exists) {
+      // 覆盖之前先留一份。这些文件是人手写的，里面可能是花了一小时整理的经历 ——
+      // 一个 --force 就没了是不可接受的。备份不进 git（data/ 整个 gitignore）。
+      const bak = `${file}.bak-${new Date().toISOString().replace(/[:.]/g, '').slice(0, 15)}`;
+      fs.copyFileSync(file, bak);
+      backedUp.push([file, bak]);
+    }
     ensureDir(path.dirname(file));
     fs.writeFileSync(file, content, 'utf8');
     created.push(file);
   }
-  return created;
+  return { created, backedUp };
 }

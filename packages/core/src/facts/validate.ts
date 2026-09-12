@@ -1,5 +1,7 @@
 import fs from 'node:fs';
-import { Claim, Profile, REQUIRED_PROFILE_FIELDS, ReposFile } from '@assit/contract';
+import path from 'node:path';
+import YAML from 'yaml';
+import { Claim, Profile, REQUIRED_PROFILE_FIELDS, ReposFile, Rubric } from '@assit/contract';
 import type { ZodError } from 'zod';
 import { loadRawClaims, loadRawProfile, loadRawRepos, type FactBase } from './load.js';
 import { paths } from '../util/paths.js';
@@ -44,6 +46,21 @@ const TEMPLATE_VALUES: Record<string, string[]> = {
 };
 const TEMPLATE_CLAIM_IDS = ['claim-example-001'];
 const TEMPLATE_COMPANIES = ['杭州某某科技有限公司', '某某大学'];
+
+/**
+ * rubric 里的模板值。
+ *
+ * 和 profile 的模板检测是同一个道理，但后果不同：profile 的模板值会印在简历上，
+ * rubric 的模板值会**悄悄地把分数算成别人的**。一份按「5 年 Go / 月薪 45k / 杭州上海」
+ * 算出来的 82 分，对一个 2 年前端来说毫无意义 —— 而界面上它看起来和真分数一模一样。
+ */
+const TEMPLATE_RUBRIC: { path: string; value: unknown; hint: string }[] = [
+  { path: 'profile.stack', value: ['go', 'redis', 'mysql', 'kubernetes', 'kafka', 'docker', 'linux'],
+    hint: '写你真能扛住追问的技术栈，不是你听说过的' },
+  { path: 'profile.cities', value: ['杭州', '上海'], hint: '换成你真正会去的城市' },
+  { path: 'profile.target_roles', value: ['backend', 'sre', 'architect', 'swe', 'fullstack'],
+    hint: '换成你要投的职能族。这道闸挡的是「销售岗拿 80 分」那类假阳性' },
+];
 
 function monthsSince(iso: string | null | undefined, now: Date): number | null {
   if (!iso) return null;
@@ -322,18 +339,94 @@ export function validateFacts(opts: ValidateOptions = {}): ValidateResult {
     }
   }
 
-  const ok = !findings.some((f) => f.severity === 'error');
+  // ---------- rubric ----------
+  //
+  // 以前这里什么都不查，后果是：rubric 文件和契约漂移之后，
+  // **所有岗位静默地打不出分**，而 `assit validate` 说「通过」。
+  // 唯一的线索是界面角落一个横幅 —— 一个你会看一眼然后忘掉的横幅。
+  //
+  // 但 rubric 坏掉**不该拦住简历生成**：打分和简历是两件独立的事，
+  // 你没配打分规则照样该能从事实库产出一份简历。所以 `facts` 能不能用
+  // 只看事实库自己，rubric 的问题进 findings、进退出码，不进这道闸。
+  const factsOk = !findings.some((f) => f.severity === 'error');
+  findings.push(...validateRubricFile());
+
   return {
-    ok,
+    ok: !findings.some((f) => f.severity === 'error'),
     findings,
-    facts: ok && profile ? { profile, claims, claimSource, repos } : undefined,
+    facts: factsOk && profile ? { profile, claims, claimSource, repos } : undefined,
   };
+}
+
+function sameValue(a: unknown, b: unknown): boolean {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+/**
+ * 校验 rubric：能不能解析 + 是不是还留着模板值。
+ *
+ * 刻意不 import scoring/rubric.ts 的 loadRubric —— 那个函数解析失败就抛，
+ * 而这里要的是**把问题变成一条 finding**，和档案的问题排在同一张清单上。
+ * 一个人能记住的只有一张清单。
+ */
+export function validateRubricFile(): Finding[] {
+  const dir = paths.rubricDir;
+  const out: Finding[] = [];
+  // 「还没配打分规则」是一个合法的早期状态（M0 就没有打分），所以是 warn。
+  // 「配了但是坏的」才是 error —— 那会让所有岗位静默地没有分数。
+  if (!fs.existsSync(dir)) {
+    return [{ severity: 'warn', file: 'facts/rubric/', message: '还没有 rubric，岗位可以入库但没有分数', hint: '跑 `assit init --only rubric`' }];
+  }
+  const files = fs.readdirSync(dir).filter((f) => /\.ya?ml$/.test(f)).sort();
+  if (files.length === 0) {
+    return [{ severity: 'warn', file: 'facts/rubric/', message: '还没有 rubric，岗位可以入库但没有分数', hint: '跑 `assit init --only rubric`' }];
+  }
+  const name = files[files.length - 1]!;
+  const rel = `facts/rubric/${name}`;
+  let raw: unknown;
+  try {
+    raw = YAML.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
+  } catch (e) {
+    return [{ severity: 'error', file: rel, message: `YAML 解析失败：${(e as Error).message}` }];
+  }
+  const r = Rubric.safeParse(raw);
+  if (!r.success) {
+    out.push(...zodFindings(rel, r.error));
+    out.push({
+      severity: 'error',
+      file: rel,
+      message: '这份 rubric 解析不了，所以所有岗位都打不出分',
+      hint: '多半是早期版本的模板留在这里了。对照 `assit init` 生成的新模板改，或者备份后重新生成',
+    });
+    return out;
+  }
+
+  const rub = r.data as unknown as Record<string, any>;
+  for (const t of TEMPLATE_RUBRIC) {
+    const [a, b] = t.path.split('.');
+    if (sameValue(rub[a!]?.[b!], t.value)) {
+      out.push({
+        severity: 'warn',
+        file: rel,
+        where: t.path,
+        message: `${t.path} 还是 \`assit init\` 的模板值`,
+        hint: t.hint,
+      });
+    }
+  }
+  if (Object.keys(r.data.weights).length === 0) {
+    out.push({ severity: 'warn', file: rel, where: 'weights', message: 'weights 是空的，会退回默认权重' });
+  }
+  return out;
 }
 
 export function loadFactsOrThrow(opts?: ValidateOptions): FactBase {
   const r = validateFacts(opts);
-  if (!r.ok || !r.facts) {
-    const errs = r.findings.filter((f) => f.severity === 'error');
+  // 只看 facts：rubric 的问题不该拦住简历生成
+  if (!r.facts) {
+    const errs = r.findings.filter(
+      (f) => f.severity === 'error' && !f.file.startsWith('facts/rubric'),
+    );
     throw new Error(
       `事实库校验未通过（${errs.length} 个错误）。先跑 \`assit validate\` 修掉：\n` +
         errs.slice(0, 5).map((e) => `  ${e.file} ${e.where ?? ''}: ${e.message}`).join('\n'),

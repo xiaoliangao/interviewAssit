@@ -2,7 +2,14 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { openDb, syncFacts, validateFacts, type Db } from '@assit/core';
+import {
+  loadFactsOrThrow,
+  openDb,
+  syncFacts,
+  validateFacts,
+  validateRubricFile,
+  type Db,
+} from '@assit/core';
 
 let dir: string;
 let db: Db;
@@ -207,5 +214,66 @@ describe('事实库同步：状态变更必须留痕', () => {
         )
         .run(),
     ).toThrow();
+  });
+});
+
+// ── rubric 校验 ────────────────────────────────────────────────────────────
+//
+// 这组测试的由来：rubric 文件和契约漂移之后，**所有岗位静默地打不出分**，
+// 而 `assit validate` 说「通过」。唯一的线索是界面角落一个横幅。
+// 下面四条锁住的是「这种事不能再发生」。
+
+describe('rubric 校验：坏掉要响，但不能拦住简历', () => {
+  const writeRubric = (text: string): void => {
+    fs.mkdirSync(path.join(dir, 'facts', 'rubric'), { recursive: true });
+    fs.writeFileSync(path.join(dir, 'facts', 'rubric', 'v1.yaml'), text, 'utf8');
+  };
+
+  it('没有 rubric 是 warn 不是 error —— 还没配打分是合法状态', () => {
+    const r = validateRubricFile();
+    expect(r.every((f) => f.severity === 'warn')).toBe(true);
+    expect(r[0]!.message).toMatch(/没有 rubric/);
+  });
+
+  it('解析不了要报 error，并明说后果是「所有岗位都打不出分」', () => {
+    // 这正是真实踩到的那一份：早期模板留在原地，契约后来变了
+    writeRubric(`weights:
+  core_stack: 40
+  domain_fit: 15
+  commute: 10
+caps:
+  - when: "core_stack 得分 < max*0.5"
+    final_score_max: 55
+    label: missing_core_stack
+`);
+    const r = validateRubricFile();
+    const errs = r.filter((f) => f.severity === 'error');
+    expect(errs.length).toBeGreaterThan(1);
+    expect(errs.some((f) => /打不出分/.test(f.message))).toBe(true);
+    expect(errs.some((f) => /domain_fit|commute/.test(f.message))).toBe(true);
+  });
+
+  it('rubric 坏掉不影响事实库本身可用 —— 打分和简历是两件事', () => {
+    writeRubric('weights:\n  nope: 1\n');
+    const r = validateFacts();
+    expect(r.ok).toBe(false); // 整体不通过，退出码要非零
+    expect(r.facts).toBeDefined(); // 但简历照样能生成
+    expect(() => loadFactsOrThrow()).not.toThrow();
+  });
+
+  it('模板值只报 warn，因为它是「能跑但算的是别人」', () => {
+    writeRubric(`profile:
+  cities: [杭州, 上海]
+  stack: [go, redis, mysql, kubernetes, kafka, docker, linux]
+  target_roles: [backend, sre, architect, swe, fullstack]
+weights:
+  core_stack: 40
+`);
+    const r = validateRubricFile();
+    expect(r.filter((f) => f.severity === 'error')).toHaveLength(0);
+    const paths_ = r.map((f) => f.where);
+    expect(paths_).toContain('profile.stack');
+    expect(paths_).toContain('profile.cities');
+    expect(paths_).toContain('profile.target_roles');
   });
 });

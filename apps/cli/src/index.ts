@@ -42,10 +42,11 @@ import {
   sourceHealth,
   syncFacts,
   validateFacts,
+  validateRubricFile,
   type Finding,
 } from '@assit/core';
 import { GuardViolation, PrivacyBlocked } from '@assit/core';
-import { scaffold } from './scaffold.js';
+import { TEMPLATE_NAMES, scaffold } from './scaffold.js';
 
 const program = new Command();
 program
@@ -77,13 +78,19 @@ function printFindings(findings: Finding[]): void {
 program
   .command('init')
   .description('在 data/facts/ 生成事实库模板（档案、一条示例主张、仓库清单）')
-  .option('--force', '覆盖已存在的文件')
+  .option('--force', '覆盖已存在的文件（会先备份成 .bak-<时间戳>）')
+  .option('--only <names>', `只生成这几份，逗号分隔：${TEMPLATE_NAMES.join(' / ')}`)
   .action((opts) => {
-    const created = scaffold(Boolean(opts.force));
+    const only = opts.only ? String(opts.only).split(',').map((x: string) => x.trim()) : undefined;
+    const { created, backedUp } = scaffold(Boolean(opts.force), only);
     if (created.length === 0) {
-      console.log('事实库已存在，没有覆盖任何文件。要重来加 --force。');
+      console.log('这些文件都已存在，没有覆盖任何东西。要重来加 --force。');
+      console.log(C.dim(`  只想重新生成某一份：assit init --force --only rubric`));
       return;
     }
+    backedUp.forEach(([f, bak]) =>
+      console.log(`${C.yellow('backup ')}  ${path.relative(process.cwd(), f)} → ${path.basename(bak)}`),
+    );
     created.forEach((f) => console.log(`${C.green('created')}  ${path.relative(process.cwd(), f)}`));
     console.log('');
     console.log(C.bold('下一步：'));
@@ -823,6 +830,21 @@ program
     const rows: [string, boolean, string][] = [];
     rows.push(['事实库 data/facts/profile.yaml', fs.existsSync(paths.profile), paths.profile]);
     rows.push(['SQLite', fs.existsSync(paths.db), paths.db]);
+    // rubric 坏掉的表现是「岗位都没有分数」，非常不像一个配置问题 ——
+    // 所以它必须出现在自检里，而不是只在打分时抛一次异常。
+    const rubricFindings = validateRubricFile();
+    const rubricErr = rubricFindings.find((f) => f.severity === 'error');
+    rows.push([
+      '打分规则 rubric',
+      !rubricErr,
+      rubricErr ? `${rubricErr.file}：${rubricErr.message}` : (() => {
+        try {
+          return `${path.basename(loadRubric().file)}@${loadRubric().version}`;
+        } catch {
+          return '未配置（岗位仍可入库，只是没有分数）';
+        }
+      })(),
+    ]);
     const chrome = findChrome();
     rows.push(['Chrome（PDF 渲染）', Boolean(chrome), chrome ?? '装一个，或设 CHROME_PATH']);
     let anyLocal = false;
