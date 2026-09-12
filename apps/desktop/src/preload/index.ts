@@ -38,6 +38,14 @@ const api = {
   recLinkJob: (id: string, jobId: string | null) => invoke<boolean>('rec:link-job', id, jobId),
   recDeleteAudio: (id: string) => invoke<boolean>('rec:delete-audio', id),
 
+  // 投递管线
+  applyPreflight: (postingId: string) => invoke<Preflight>('apply:preflight', postingId),
+  applyPipeline: () => invoke<PipelineRow[]>('apply:pipeline'),
+  applyFunnel: (dim: 'score' | 'channel' | 'role') => invoke<FunnelBucket[]>('apply:funnel', dim),
+  applySnapshot: (id: string) => invoke<AppSnapshot>('apply:snapshot', id),
+  applyRecord: (input: { postingId: string; channel: string; resumePath: string; greeting?: string; overrideCooldown?: boolean }) =>
+    invoke<{ id: string; snapshots: { kind: string; sha256: string }[] }>('apply:record', input),
+
   openExternal: (url: string) => invoke<boolean>('shell:open', url),
   reveal: (p: string) => invoke<boolean>('shell:reveal', p),
 };
@@ -197,6 +205,52 @@ export interface RecordingRow {
   note: string | null;
   error: string | null;
   fileExists: boolean;
+}
+
+export interface Preflight {
+  jobId: string;
+  postingId: string;
+  company: string;
+  companyId: string;
+  title: string;
+  roleFamily: string;
+  applicationKey: string;
+  alreadyApplied: { id: string; sentAt: string } | null;
+  cooldown: { blocked: boolean; reason: string; daysAgo?: number };
+  scoreId: string | null;
+  finalScore: number | null;
+  jdSha256: string | null;
+}
+
+export interface PipelineRow {
+  id: string;
+  company: string;
+  title: string;
+  channel: string;
+  sentAt: string;
+  status: string;
+  finalScore: number | null;
+  daysSince: number;
+  lastEvent: { type: string; at: string; confirmed: boolean } | null;
+  unconfirmedEvents: number;
+}
+
+export interface FunnelBucket {
+  key: string;
+  label: string;
+  sent: number;
+  replied: number;
+  interviewed: number;
+  offered: number;
+  replyRate: number | null;
+}
+
+export interface AppSnapshot {
+  hasResume: boolean;
+  resumeBytes: number;
+  jd: string | null;
+  greeting: string | null;
+  forms: { domain: string; url: string | null; data: unknown }[];
 }
 
 export interface TodaySummary {

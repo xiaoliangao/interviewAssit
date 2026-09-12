@@ -210,3 +210,14 @@ a { color: var(--accent); }
   line-height: 1.5;
 }
 .consent input { margin-top: 3px; }
+
+/* 漏斗里的条：画在数字后面，不抢读数 */
+.bar {
+  display: inline-block;
+  height: 6px;
+  background: #cfe3ff;
+  border-radius: 3px;
+  margin-right: 6px;
+  vertical-align: middle;
+  min-width: 2px;
+}

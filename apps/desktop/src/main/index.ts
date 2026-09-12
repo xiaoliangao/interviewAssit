@@ -107,6 +107,10 @@ function createWindow(): BrowserWindow {
         document.querySelector('.drawer-backdrop')?.click();
         await sleep(300);
 
+        go('投递管线');
+        await sleep(1200);
+        out.apply = [...document.querySelectorAll('main .card h2')].map(h => h.innerText).join(' / ');
+
         go('面试录音');
         await sleep(1200);
         // rubric 报错横幅也在 main 里且很长，取尾部才看得到面板正文
@@ -132,6 +136,7 @@ function createWindow(): BrowserWindow {
             log(`ui-check 今日 ${String(r.today).length} 字符`);
             log(`ui-check 岗位池 ${r.rows} 行\n${String(r.jobs).slice(0, 700)}`);
             log(`ui-check 详情抽屉：\n${String(r.drawer).slice(0, 600)}`);
+            log(`ui-check 投递管线：${String(r.apply)}`);
             log(`ui-check 面试录音（main 尾部）：\n${String(r.interview)}`);
             log(
               `ui-check 同意闸门：勾选框=${r.hasConsent} ` +

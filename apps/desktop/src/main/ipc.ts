@@ -1,8 +1,10 @@
 import { ipcMain, shell } from 'electron';
 import {
   appendChunk,
+  applicationSnapshot,
   currentProfileVersion,
   facets,
+  funnel,
   ignoreJob,
   jobDetail,
   loadRubric,
@@ -10,9 +12,12 @@ import {
   liveRecordings,
   loadSources,
   openDb,
+  pipeline,
+  preflight,
   paths,
   pruneRecordings,
   queryJobs,
+  recordApplication,
   recoverStale,
   runSource,
   scoreAllJobs,
@@ -195,6 +200,32 @@ export function registerIpc(): void {
     return true;
   });
   handle('rec:delete-audio', (id: string) => deleteRecordingAudio(getDb(), id));
+
+  // ── 投递管线（DESIGN §7.1）────────────────────────────────────────────
+  handle('apply:preflight', (postingId: string) => preflight(getDb(), { jobId: '', postingId }));
+  handle('apply:pipeline', () => pipeline(getDb()));
+  handle('apply:funnel', (dim: 'score' | 'channel' | 'role') => funnel(getDb(), dim));
+  handle('apply:snapshot', (id: string) => {
+    const s = applicationSnapshot(getDb(), id);
+    // 简历是二进制，不往渲染层送 —— 那一屏要的是「当时写了什么」，不是 PDF 字节
+    return { hasResume: s.resume !== null, resumeBytes: s.resume?.length ?? 0,
+      jd: s.jd, greeting: s.greeting, forms: s.forms };
+  });
+  handle('apply:record', (input: {
+    postingId: string; channel: string; resumePath: string;
+    greeting?: string; overrideCooldown?: boolean;
+  }) => {
+    const fs2 = require('node:fs') as typeof import('node:fs');
+    return recordApplication(getDb(), {
+      postingId: input.postingId,
+      channel: input.channel,
+      resumePdf: fs2.readFileSync(input.resumePath),
+      greeting: input.greeting,
+      overrideCooldown: input.overrideCooldown,
+      // 到这一步的唯一路径是用户在确认对话框里点过了 —— 见 Apply.tsx
+      confirmedByUser: true,
+    });
+  });
 
   handle('shell:open', async (url: string) => {
     if (!/^https?:\/\//i.test(url)) throw new Error('只允许打开 http(s) 链接');

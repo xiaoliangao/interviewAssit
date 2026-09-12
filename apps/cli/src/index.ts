@@ -13,6 +13,7 @@ import {
   explainModule,
   findChrome,
   generateResume,
+  funnel,
   ignoreJob,
   ingestPosting,
   isGitRepo,
@@ -22,6 +23,7 @@ import {
   loadRubric,
   deleteRecordingAudio,
   listRecordings,
+  applicationSnapshot,
   applyRegistrySync,
   doctorRegistry,
   fetchUpstreamEntries,
@@ -30,12 +32,15 @@ import {
   openDb,
   pastedPosting,
   paths,
+  pipeline,
+  preflight,
   pruneRecordings,
   persistExplanation,
   persistScan,
   proposeClaims,
   registryStats,
   registryToSourcesYaml,
+  recordApplication,
   recoverStale,
   planRegistrySync,
   reparseJobs,
@@ -957,6 +962,111 @@ program
       console.log('');
       console.log(C.dim('  音频默认 30 天后自动删，记录行永远保留 —— 行里不含音频内容，'));
       console.log(C.dim('  但「哪天、哪个岗位、录了多久」正是复盘时唯一还需要的东西。'));
+    } finally {
+      db.close();
+    }
+  });
+
+program
+  .command('apply <postingId>')
+  .description('记录一次投递：四份内容寻址快照 + 去重 + 冷却检查')
+  .option('--resume <pdf>', '实际发出去的那个 PDF 路径')
+  .option('--channel <c>', 'chat / form / email / external', 'chat')
+  .option('--greeting <text>', '实际发出的话术')
+  .option('--confirm', '我已经真的投出去了，记录它', false)
+  .option('--override-cooldown', '冷却期内仍要投（换了部门之类）', false)
+  .action((postingId, opts) => {
+    const db = openDb();
+    try {
+      const pre = preflight(db, { jobId: '', postingId });
+      console.log(C.bold(`${pre.company} · ${pre.title}`));
+      console.log(`  职能 ${pre.roleFamily}　分数 ${pre.finalScore ?? '—'}　投递键 ${pre.applicationKey}`);
+      if (pre.alreadyApplied) {
+        console.log(C.red(`  这个挂牌已经投过：${pre.alreadyApplied.sentAt}（${pre.alreadyApplied.id}）`));
+        return;
+      }
+      if (pre.cooldown.blocked) {
+        console.log(C.yellow(`  ⚠ ${pre.cooldown.reason}`));
+      }
+      if (!pre.jdSha256) console.log(C.red('  没有 JD 存档 —— 投了也还原不出当时看到的 JD'));
+
+      if (!opts.confirm) {
+        console.log('');
+        console.log(C.bold('没有记录任何东西。'));
+        console.log(C.dim('  这个命令不会替你投递 —— 它记录你**已经**投出去的那一次。'));
+        console.log(C.dim('  真投完了再回来加 --confirm --resume <你实际发出的 PDF>。'));
+        return;
+      }
+      if (!opts.resume) throw new Error('--confirm 必须同时给 --resume：没有快照的投递记录三个月后什么也还原不出来');
+
+      const r = recordApplication(db, {
+        postingId,
+        channel: opts.channel,
+        resumePdf: fs.readFileSync(opts.resume),
+        greeting: opts.greeting,
+        confirmedByUser: true,
+        overrideCooldown: Boolean(opts.overrideCooldown),
+      });
+      console.log('');
+      console.log(`${C.green('recorded')} ${r.id}`);
+      r.snapshots.forEach((s2) => console.log(C.dim(`  ${s2.kind.padEnd(9)} ${s2.sha256.slice(0, 12)}`)));
+    } finally {
+      db.close();
+    }
+  });
+
+program
+  .command('applications')
+  .description('投递管线与漏斗')
+  .option('--funnel <dim>', 'score / channel / role')
+  .option('--show <id>', '还原一条投递当时发出去的东西')
+  .action((opts) => {
+    const db = openDb();
+    try {
+      if (opts.show) {
+        const s2 = applicationSnapshot(db, opts.show);
+        console.log(C.bold('简历'), s2.resume ? `${s2.resume.length} 字节` : C.red('读不到了'));
+        console.log(C.bold('话术'), s2.greeting ?? C.dim('—'));
+        s2.forms.forEach((f) => console.log(C.bold('表单'), f.domain, JSON.stringify(f.data).slice(0, 200)));
+        console.log(C.bold('当时的 JD'));
+        console.log(C.dim((s2.jd ?? '(读不到了)').slice(0, 600)));
+        return;
+      }
+      if (opts.funnel) {
+        const rows = funnel(db, opts.funnel);
+        if (rows.length === 0) { console.log('还没有投递记录。'); return; }
+        console.log(C.bold('分组        投出   回复   面试   offer   回复率'));
+        for (const b of rows) {
+          const rate = b.replyRate === null
+            ? C.dim('样本不足')
+            : `${Math.round(b.replyRate * 100)}%`;
+          console.log(
+            `${b.label.padEnd(11)} ${String(b.sent).padStart(4)} ${String(b.replied).padStart(6)} ` +
+              `${String(b.interviewed).padStart(6)} ${String(b.offered).padStart(7)}   ${rate}`,
+          );
+        }
+        console.log('');
+        console.log(C.dim('  样本 <5 不给比率：3 投 1 回不是 33%，是「还不知道」——'));
+        console.log(C.dim('  而那个数字会让你真的据此改策略。'));
+        return;
+      }
+
+      const rows = pipeline(db);
+      if (rows.length === 0) {
+        console.log('还没有投递记录。');
+        console.log(C.dim('  投完一家之后：assit apply <postingId> --confirm --resume out/xxx.pdf'));
+        return;
+      }
+      console.log(C.bold('投出时间        天前  分数  状态       公司 · 职位'));
+      for (const r of rows) {
+        const flag = r.unconfirmedEvents > 0 ? C.yellow(` ●${r.unconfirmedEvents}`) : '';
+        console.log(
+          `${r.sentAt.slice(0, 16).replace('T', ' ')}  ${String(r.daysSince).padStart(4)}  ` +
+            `${String(r.finalScore ?? '—').padStart(4)}  ${r.status.padEnd(10)} ${r.company} · ${r.title}${flag}`,
+        );
+      }
+      console.log('');
+      console.log(C.dim('  ● = 有未确认的事件（邮件解析出来的要人点过才算数）'));
     } finally {
       db.close();
     }
