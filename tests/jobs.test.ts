@@ -138,6 +138,48 @@ describe('入库：所有采集通道汇到同一条路径', () => {
     expect(roleFamily('推荐算法工程师')).toBe('algo');
   });
 
+  it('英文标题也要分对 —— ATS 通道基本都是英文', () => {
+    expect(roleFamily('Senior Backend Engineer')).toBe('backend');
+    expect(roleFamily('Site Reliability Engineer')).toBe('sre');
+    expect(roleFamily('Software Engineer, Infrastructure')).toBe('sre');
+    expect(roleFamily('Data Scientist, Finance')).toBe('data');
+    expect(roleFamily('AI Applied Scientist')).toBe('algo');
+    expect(roleFamily('Brand Designer, Product Launches')).toBe('design');
+    expect(roleFamily('Account Executive, Enterprise')).toBe('other');
+    expect(roleFamily('Business Recruiter')).toBe('other');
+  });
+
+  it('职能词优先于领域词 —— 一个标题有两个维度', () => {
+    // Infrastructure Product Manager 的领域是基础设施、职能是 PM，它是个 PM 岗
+    expect(roleFamily('Infrastructure Product Manager')).toBe('pm');
+    expect(roleFamily('Design Program Manager, AI Evals')).toBe('pm');
+    expect(roleFamily('Product Designer, Growth')).toBe('design');
+    // 但 Security Engineer 两边都是领域，正常走领域判定
+    expect(roleFamily('Security Engineer')).toBe('security');
+  });
+
+  it('非技术职能排在领域判定之后，避免误伤带业务后缀的技术岗', () => {
+    // 「Data Scientist, Finance」的 Finance 是领域限定词，不是职能
+    expect(roleFamily('Data Scientist, Finance')).toBe('data');
+    expect(roleFamily('Financial Analyst')).toBe('other');
+    // 所有领域规则都不匹配之后，才轮到非技术职能接住它
+    expect(roleFamily('Director, People Partners - Product, Design & Engineering')).toBe('other');
+    expect(roleFamily('Customer Enablement Manager (Berlin, Germany)')).toBe('other');
+  });
+
+  it('工程管理单独一族 —— 和 IC 岗不是一回事', () => {
+    expect(roleFamily('Manager, Software Engineering - Billing')).toBe('em');
+    expect(roleFamily('Engineering Manager, Platform')).toBe('em');
+    expect(roleFamily('Senior Backend Engineer')).toBe('backend'); // IC 不受影响
+  });
+
+  it('看不出类型的工程岗标成 swe，不硬猜成 backend', () => {
+    // 猜错会让一个前端岗混进你的高分列表；
+    // core_stack 那一维本来就能区分（它的 JD 会写 React 而不是 Go）
+    expect(roleFamily('Software Engineer')).toBe('swe');
+    expect(roleFamily('Software Engineer, Frontend Platform')).toBe('frontend');
+  });
+
   it('粘贴入库对同一份 JD 幂等', () => {
     // 内容 hash 当 platform_job_id，粘两次不会重复建岗位
     const a = pastedPosting({ jdText: JD_GOOD, company: '甲公司', title: '后端' });
@@ -310,6 +352,63 @@ describe('分数与岗位解耦', () => {
     const list = scoreAllJobs(db, { rubric: RUBRIC, version: 'rv1', file: 'v.yaml' }, { profileVersion: 'p1' });
     expect(list).toHaveLength(2);
     expect(list[list.length - 1]!.trace.hard_gaps.length).toBeGreaterThan(0);
+  });
+});
+
+describe('职能族闸门：补上「最重要的维度恰好未知」这个洞', () => {
+  const R = Rubric.parse({
+    ...JSON.parse(JSON.stringify(RUBRIC)),
+    profile: { ...RUBRIC.profile, target_roles: ['backend', 'sre'] },
+    hard_gates: [{ key: 'role_family', slack: 0 }],
+    caps: [{ label: 'role_mismatch', when: 'role_mismatch', final_score_max: 25 }],
+  });
+
+  it('销售岗不会因为「没有技术要求」而拿高分', () => {
+    // 真实案例：figma 的 Account Executive 原本拿 80 分排在后端岗前面 ——
+    // core_stack 被判 unknown 排除出分母，剩下的通用维度碰巧都匹配
+    const t = scoreJob({
+      rubric: R, rubricVersion: 't', profileVersion: 'p',
+      jdText: '负责企业客户的销售拓展，5 年以上销售经验，周末双休。',
+      attrs: {
+        exp_years_min: { value: 5, confidence: 'explicit_jd', source: '5 年以上销售经验' },
+        work_schedule: { value: '双休', confidence: 'explicit_jd', source: '周末双休' },
+      } as any,
+      salary: { min: null, max: null, months: null, monthsConfidence: 'unknown', raw: '' },
+      city: null, outsourcingLikelihood: null, roleFamily: 'other',
+    });
+    expect(t.raw_score).toBeGreaterThan(70); // 原始分确实很高
+    expect(t.final_score).toBeLessThanOrEqual(25); // 但被职能族闸门压住了
+    expect(t.hard_gaps.join()).toContain('role_family');
+  });
+
+  it('目标职能族内的岗位不受影响', () => {
+    const t = scoreJob({
+      rubric: R, rubricVersion: 't', profileVersion: 'p',
+      jdText: '精通 Go、Redis。5 年以上经验。周末双休。',
+      attrs: {
+        tech_stack: { value: ['go', 'redis'], confidence: 'explicit_jd', source: '精通 Go、Redis' },
+        exp_years_min: { value: 5, confidence: 'explicit_jd', source: '5 年以上经验' },
+      } as any,
+      salary: { min: null, max: null, months: null, monthsConfidence: 'unknown', raw: '' },
+      city: null, outsourcingLikelihood: null, roleFamily: 'backend',
+    });
+    expect(t.hard_gaps).toEqual([]);
+    expect(t.final_score).toBeGreaterThan(60);
+  });
+
+  it('没设置 target_roles 时这道闸不生效', () => {
+    const noTarget = Rubric.parse({
+      ...JSON.parse(JSON.stringify(RUBRIC)),
+      hard_gates: [{ key: 'role_family', slack: 0 }],
+    });
+    const t = scoreJob({
+      rubric: noTarget, rubricVersion: 't', profileVersion: 'p', jdText: '销售岗',
+      attrs: {} as any,
+      salary: { min: null, max: null, months: null, monthsConfidence: 'unknown', raw: '' },
+      city: null, outsourcingLikelihood: null, roleFamily: 'other',
+    });
+    expect(t.gates.find((g) => g.key === 'role_family')!.status).toBe('unknown');
+    expect(t.hard_gaps).toEqual([]);
   });
 });
 

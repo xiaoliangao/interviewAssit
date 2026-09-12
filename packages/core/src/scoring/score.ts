@@ -59,6 +59,8 @@ export interface ScoreInput {
   salary: SalaryParse;
   city: string | null;
   outsourcingLikelihood: number | null;
+  /** 入库时由职位名算出的职能族。见 rubric.profile.target_roles 的说明。 */
+  roleFamily?: string | null;
 }
 
 const norm = (s: string): string => s.replace(/\s+/g, '');
@@ -238,6 +240,19 @@ function runGates(input: ScoreInput): GateResult[] {
         detail: `要求 ${need.value} 年，你 ${mine} 年（容差 ${g.slack}）`,
         jd_quote: need.source,
       });
+    } else if (g.key === 'role_family') {
+      const want = input.rubric.profile.target_roles;
+      if (want.length === 0 || !input.roleFamily) {
+        out.push({ key: 'role_family', status: 'unknown', detail: '未设置目标职能族', jd_quote: null });
+        continue;
+      }
+      const pass = want.includes(input.roleFamily);
+      out.push({
+        key: 'role_family',
+        status: pass ? 'pass' : 'fail',
+        detail: `这是 ${input.roleFamily} 岗，你要投 ${want.join('/')}`,
+        jd_quote: null,
+      });
     } else if (g.key === 'salary_floor') {
       const floor = input.rubric.profile.salary_floor_yuan;
       if (input.salary.min === null || floor === undefined) {
@@ -330,6 +345,12 @@ export function scoreJob(input: ScoreInput): ScoreTrace {
       return !!s && s.score === 0;
     },
     coverage_low: (th) => trace.coverage < (th ?? 0.4),
+    role_mismatch: () => {
+      const want = input.rubric.profile.target_roles;
+      return want.length > 0 && !!input.roleFamily && !want.includes(input.roleFamily);
+    },
+    // JD 里一个技术词都没有 ≠ 「技术要求都满足」。评不了就别给高分。
+    core_stack_unknown: () => trace.unknown_dims.includes('core_stack'),
   };
 
   for (const cap of input.rubric.caps) {

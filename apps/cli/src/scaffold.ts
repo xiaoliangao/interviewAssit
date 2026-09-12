@@ -127,6 +127,41 @@ repos: []
   #   exclude: ["docs", "scripts/legacy"]
 `;
 
+const SOURCES = `# 公开招聘接口采集源。
+#
+# 这条通道只收**无需登录**的公开接口：没有封号风险，JD 是全文而不是截断。
+# BOSS / 51job / 猎聘要登录，不在这里 —— 它们走浏览器扩展通道（M2），
+# 在那之前用 \`assit ingest\` 手动粘贴，下游处理完全一样。
+#
+# 配好后跑：assit collect  →  assit score
+# 看健康度：assit sources
+
+sources: []
+
+  # 外企与出海公司大量使用 Greenhouse / Lever / Ashby，接口干净且稳定
+  # - id: greenhouse:acme
+  #   platform: greenhouse
+  #   board: acme          # boards.greenhouse.io/<board> 里的那个名字
+  #
+  # - id: lever:acme
+  #   platform: lever
+  #   company: acme        # jobs.lever.co/<company>
+  #
+  # - id: ashby:acme
+  #   platform: ashby
+  #   board: acme
+
+  # 通用通道：任何输出 schema.org JobPosting 的页面都能抓 ——
+  # Moka、北森、以及大量大厂自建招聘站都会输出（因为要被 Google for Jobs 收录）。
+  # 与其逐个逆向各家 ATS 的私有接口（没有兼容承诺、随时会变、每家都要单独写），
+  # 不如吃这个公开标准。
+  # - id: jsonld:acme-careers
+  #   platform: jsonld
+  #   company: 某某科技有限公司   # 页面没写公司名时的兜底
+  #   urls:
+  #     - https://careers.acme.cn/jobs/123
+`;
+
 const RUBRIC = `# 打分规则。rubric_version 由这个文件的内容 hash 派生 ——
 # 不要手写版本号，手写的一定会忘记改，然后你就有两套规则产出的分数
 # 共用一个标签，永远对不上账。
@@ -149,6 +184,11 @@ profile:
   # 写你真能扛住追问的，不是你听说过的。
   stack: [go, redis, mysql, kubernetes, kafka, docker, linux]
 
+  # 你要投的职能族。空数组 = 不限。
+  # 强烈建议填：一个销售岗的 JD 里没有任何技术词，core_stack 会被判 unknown
+  # 而排除出分母，剩下的通用维度碰巧都匹配 —— 于是它拿 80 分排在你的后端岗前面。
+  target_roles: [backend, sre, architect, swe, fullstack]
+
   acceptable_schedules: [双休, 弹性]
 
 # 各维度权重。未披露的维度不计入分母，所以这里的总和不一定是 100。
@@ -163,6 +203,7 @@ weights:
 # 硬门槛。不过**不淘汰**，只标记 hard_gaps 并沉底 ——
 # JD 的门槛常常是虚标的，真去聊了往往也能谈。
 hard_gates:
+  - key: role_family        # 不是你那一行的岗位，沉底
   - key: education
   - key: exp_years_min
     slack: 1                # 要 5 年而你 4 年，仍算通过
@@ -181,6 +222,12 @@ caps:
   - label: schedule_unacceptable
     when: schedule_bad
     final_score_max: 45
+  - label: role_mismatch
+    when: role_mismatch
+    final_score_max: 25
+  - label: cannot_evaluate    # JD 里一个技术词都没有，评不了
+    when: core_stack_unknown
+    final_score_max: 40
 
 # 未知维度不计入分母。记 0 分等于对信息披露少的岗位加负分 ——
 # 而那恰好是你最该警惕的一批岗位。
@@ -209,6 +256,7 @@ const FACTS_README = `# 事实库
 | profile.yaml | 登记性事实：姓名、学历、公司全称、证书 | **否，只能照抄** |
 | claims/*.json | 叙事性资产：你做过什么、做到什么程度 | 措辞可改，责任等级不可改 |
 | repos.yaml | 项目解析要扫哪些仓库 | — |
+| sources.yaml | 公开招聘接口采集源 | — |
 | rubric/*.yaml | 打分规则 | — |
 
 改完跑 \`assit validate\`。
@@ -219,6 +267,7 @@ export function scaffold(force: boolean): string[] {
     [paths.profile, PROFILE],
     [path.join(paths.claimsDir, 'claim-example-001.json'), CLAIM],
     [paths.reposFile, REPOS],
+    [path.join(paths.facts, 'sources.yaml'), SOURCES],
     [path.join(paths.rubricDir, 'v1.yaml'), RUBRIC],
     [path.join(paths.facts, 'README.md'), FACTS_README],
   ];

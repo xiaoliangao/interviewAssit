@@ -13,18 +13,44 @@ import { coverage, parseJob, type ParsedAttrs, type StoredAttrs } from './parse.
  * 不会变成「又要把下游逻辑重写一遍」。
  */
 
-/** 职能族。投递去重用的是它，不是职位名 —— 你可能想投同一家的后端和 SRE。 */
+/**
+ * 职能族。投递去重用的是它，不是职位名 —— 你可能想投同一家的后端和 SRE。
+ * 打分时它还是一道闸：不是你那一行的岗位要沉底（见 rubric.profile.target_roles）。
+ *
+ * **顺序即优先级**，而且分两段：
+ *
+ * 1. 先判**职能词**（manager / designer）。一个标题同时有职能和领域两个维度，
+ *    「Infrastructure Product Manager」的领域是基础设施、职能是产品经理 ——
+ *    它是个 PM 岗，不是 SRE 岗。领域词排前面会把它判错。
+ * 2. 再判**领域词**，具体的在前、泛化的在后。
+ *    「Software Engineer, Frontend Platform」要先被 frontend 接住，
+ *    否则会被最后那条泛化规则吞掉。
+ */
 const ROLE_FAMILIES: [RegExp, string][] = [
-  [/(sre|运维|devops|基础架构|平台工程|infra)/i, 'sre'],
-  [/(前端|frontend|web开发|h5|小程序|客户端|android|ios|移动端)/i, 'frontend'],
-  [/(算法|machine\s*learning|深度学习|nlp|cv|推荐|搜索算法|大模型|llm)/i, 'algo'],
-  [/(数据开发|数仓|大数据|data\s*engineer|etl|bi)/i, 'data'],
-  [/(测试|qa|quality|测开)/i, 'qa'],
-  [/(安全|security|渗透)/i, 'security'],
-  [/(产品经理|product\s*manager|\bpm\b)/i, 'pm'],
+  // ── 工程管理：和 IC 岗不是一回事，单独一族让你自己决定投不投 ──
+  [/((manager|director|head|\bvp\b|负责人|总监),?\s*(of\s*)?(software|engineering|研发|技术)|engineering\s*manager|技术经理)/i, 'em'],
+  // ── 职能词优先 ──
+  [/(产品经理|product\s*manager|program\s*manager|\btpm\b|\bpm\b)/i, 'pm'],
+  [/(设计师|designer|\bux\b|user\s*experience)/i, 'design'],
+  // ── 领域词 ──
+  [/(sre|site\s*reliability|运维|devops|基础架构|平台工程|\binfrastructure\b|platform\s*engineer|production\s*engineer)/i, 'sre'],
+  [/(前端|frontend|front[- ]end|web开发|h5|小程序|客户端|android|ios|移动端|mobile\s*engineer|ui\s*engineer)/i, 'frontend'],
+  [/(算法|machine\s*learning|\bml\b|深度学习|nlp|computer\s*vision|推荐|搜索算法|大模型|\bllm\b|applied\s*scientist|research\s*scientist|\bai\b.*(engineer|scientist))/i, 'algo'],
+  [/(数据开发|数仓|大数据|data\s*(engineer|scientist|analyst)|analytics\s*engineer|etl|\bbi\b)/i, 'data'],
+  [/(测试|\bqa\b|quality\s*engineer|测开|\bsdet\b|test\s*engineer)/i, 'qa'],
+  [/(安全|security\s*engineer|appsec|渗透|penetration)/i, 'security'],
   [/(架构师|architect)/i, 'architect'],
-  [/(后端|服务端|backend|java|golang|\bgo\b|python|服务器开发)/i, 'backend'],
-  [/(全栈|fullstack)/i, 'fullstack'],
+  [/(全栈|full[- ]?stack)/i, 'fullstack'],
+  [/(后端|服务端|backend|back[- ]end|server[- ]side|java|golang|\bgo\b|python|服务器开发)/i, 'backend'],
+  // ── 非技术职能：排在领域判定**之后** ──
+  // 放前面会把「Data Scientist, Finance」判成 other —— 那里的 Finance 是
+  // 领域限定词而不是职能。放这里既能接住「Director, People Partners」
+  // （所有领域规则都不匹配后才轮到它），又不会误伤带业务后缀的技术岗。
+  [/(recruiter|talent\s*(acquisition|partner)|people\s*(partner|operations)|人力资源|招聘|counsel|legal|法务|marketing|市场营销|\bsales\b|销售|account\s*(executive|manager)|finance|财务|accounting|customer\s*(success|support|enablement)|客服|\bgtm\b)/i, 'other'],
+  // 泛化兜底：明确是工程岗，但看不出是哪一类。
+  // 标成 swe 而不是硬猜成 backend —— 猜错会让一个前端岗混进你的高分列表，
+  // 而 core_stack 那一维本来就能把它区分开（它的 JD 会写 React 而不是 Go）。
+  [/(software\s*engineer|\bswe\b|开发工程师|研发工程师|\bengineer\b)/i, 'swe'],
 ];
 
 export function roleFamily(title: string): string {

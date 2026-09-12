@@ -195,6 +195,51 @@ describe('技术栈', () => {
     const s = parseTechStack('有高并发、微服务、分布式经验');
     expect(s.value).toBeNull();
   });
+
+  it('英文日常词不该被当成技术命中', () => {
+    // 真实事故：一个 HR 总监岗的 JD 里出现「as you go」，
+    // core_stack 算成「要求 1 项、命中 1 项」= 满分，
+    // 然后这个岗位带着 80 分排在真正想投的后端岗前面。
+    // 这类假阳性比漏检危险得多，因为它是系统性的、而且看起来完全合理。
+    for (const prose of [
+      'We iterate as you go. We believe in partnership.',
+      'A rust-proof process for swift decision making',
+      'Partner with the Ruby team on go-to-market',
+      'Spark curiosity and echo our values',
+      // 真实事故 2：figma 的 GTM Systems Architect。
+      // 词边界不排斥连字符，而 Familiarity with 又正好在意图词表里，
+      // 两道检查同时失手 —— 一个 GTM 岗拿到 core_stack 满分。
+      '· Familiarity with a SaaS Go-To-Market business model',
+      'Experience with go-to-market strategy and no-go decisions',
+    ]) {
+      expect(parseTechStack(prose).value, prose).toBeNull();
+    }
+  });
+
+  it('连字符复合词按后缀区分技术义', () => {
+    // Go-based 是技术义，Go-To-Market 不是
+    expect(parseTechStack('Go-based microservices with Redis').value).toContain('go');
+    expect(parseTechStack('熟悉 Go-routines 与调度').value).toContain('go');
+    expect(parseTechStack('drive our Go-To-Market motion').value).toBeNull();
+  });
+
+  it('意图词必须是「点名一项技术」的形式，不能是 JD 通用套话', () => {
+    // experience / skills / knowledge 每份 JD 都有，收进来这道检查就恒真了
+    expect(parseTechStack('You will need relevant experience. Let it go.').value).toBeNull();
+    expect(parseTechStack('Strong communication skills; things move fast so go quickly').value).toBeNull();
+    // 带介词的形式后面跟的几乎必然是具体技术
+    expect(parseTechStack('Experience with Go in production').value).toContain('go');
+    expect(parseTechStack('Familiarity with Rust').value).toContain('rust');
+  });
+
+  it('有上下文佐证时，同一个词就该命中', () => {
+    // 旁边有确凿的技术词
+    expect(parseTechStack('精通 Go，熟悉 Redis、MySQL').value).toContain('go');
+    expect(parseTechStack('Proficient in Go and Kubernetes').value).toContain('go');
+    // 或者附近有「经验 / experience」这类意图词
+    expect(parseTechStack('5+ years of Go programming experience').value).toContain('go');
+    expect(parseTechStack('熟悉 Rust 语言').value).toContain('rust');
+  });
 });
 
 describe('整体解析与 coverage', () => {

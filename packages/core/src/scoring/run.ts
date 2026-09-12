@@ -93,6 +93,7 @@ export function scoreAllJobs(db: Db, loaded: LoadedRubric, opts: ScoreRunOptions
       salary,
       city: r.city,
       outsourcingLikelihood: r.outsourcing ?? null,
+      roleFamily: r.role_family ?? null,
     });
 
     insert.run(

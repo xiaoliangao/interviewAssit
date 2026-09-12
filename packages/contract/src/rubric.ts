@@ -17,6 +17,8 @@ export const CapCondition = z.enum([
   'schedule_bad', // 大小周 / 996
   'salary_below_floor', // 薪资低于你的下限
   'coverage_low', // 披露维度太少
+  'role_mismatch', // 职能族不在你的目标里
+  'core_stack_unknown', // JD 里一个技术词都没有 —— 评不了，不是「都满足」
 ]);
 export type CapCondition = z.infer<typeof CapCondition>;
 
@@ -43,6 +45,16 @@ export const RubricProfile = z
     salary_target_yuan: z.number().int().positive().optional(),
     /** 你的技术栈。打分时和 JD 要求求交 */
     stack: z.array(z.string()).default([]),
+    /**
+     * 你要投的职能族（backend / sre / frontend / algo / data / qa / security / pm / architect …）。
+     * 空数组表示不限。
+     *
+     * 这条比想象中重要：一个销售岗的 JD 里没有任何技术词，core_stack 会被判成
+     * unknown 而排除出分母，剩下的通用维度碰巧都匹配 —— 于是它拿到 80 分排在你
+     * 的后端岗前面。「未知不计入分母」这条原则在最重要的维度恰好未知时会失效，
+     * 职能族就是补上这个洞的那道闸。
+     */
+    target_roles: z.array(z.string()).default([]),
     /** 能接受的作息，不在列表里的扣分 */
     acceptable_schedules: z.array(z.string()).default(['双休', '弹性']),
   })
@@ -57,7 +69,7 @@ export const Rubric = z
     hard_gates: z
       .array(
         z.object({
-          key: z.enum(['education', 'exp_years_min', 'salary_floor']),
+          key: z.enum(['education', 'exp_years_min', 'salary_floor', 'role_family']),
           /** 容差：JD 要 5 年而你 4 年，slack=1 时仍算通过 */
           slack: z.number().min(0).default(0),
         }),

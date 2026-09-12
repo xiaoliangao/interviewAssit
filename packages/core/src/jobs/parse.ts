@@ -253,7 +253,62 @@ function canon(term: string): string {
 }
 
 /**
- * 从 JD 抽技术栈。extra 传入你自己账本里的 tag，
+ * 这些技术名同时是普通英文词。词边界拦不住它们 ——
+ * 「as you go」「a rust-proof process」「swift response」都会被当成技术命中。
+ *
+ * 后果比看起来严重：一个 HR 总监岗的 JD 里出现一次「go」，
+ * core_stack 就会算成「要求 1 项、命中 1 项」= 满分，
+ * 然后这个岗位带着 80 分排在你真正想投的后端岗前面。
+ * 这类假阳性比漏检危险得多，因为它是**系统性**的，而且看起来完全合理。
+ */
+const AMBIGUOUS_TERMS = new Set([
+  'go', 'rust', 'swift', 'ruby', 'dart', 'spark', 'hive', 'pulsar', 'nats',
+  'echo', 'gin', 'rag', 'llm', 'r',
+]);
+
+/**
+ * 出现这些词，说明附近在**点名一项技术**，而不是在用英文的日常义。
+ *
+ * 刻意不收 `experience` / `skills` / `knowledge` / `经验` / `开发` 这类裸词：
+ * 每份 JD 都有它们，收进来等于这道检查恒真、等于没做。
+ * 收的都是带介词或限定的形式（experience with / familiarity with / years of），
+ * 它们后面跟的几乎必然是一项具体技术。
+ */
+const TECH_INTENT =
+  /熟悉|精通|掌握|擅长|技术栈|编程语言|开发语言|语言|框架|proficient|expert\s+(in|with)|programming|languages?|framework|stack|codebase|written\s+in|built\s+(with|on)|experience\s+(with|in|using)|familiar(ity)?\s+with|years?\s+of/i;
+
+/**
+ * 连字符复合词里的技术后缀。`Go-based` 是技术义，`Go-To-Market` 不是。
+ *
+ * 这个区分是必须的：figma 的 JD 里有一句「Familiarity with a SaaS
+ * Go-To-Market business model」，前后两道检查都放它过去了 ——
+ * 词边界不排斥连字符，而 `Familiarity with` 又正好在意图词表里。
+ * 结果一个 GTM 岗拿到 core_stack 满分，带着 80 分排在真正的后端岗前面。
+ */
+const HYPHEN_TECH_SUFFIX = /^(based|lang|routines?|native|style|first|like|powered|centric)\b/i;
+
+function inNonTechCompound(text: string, pos: number, term: string): boolean {
+  // 前面挂着连字符：no-go、all-in-one 之类，基本都是复合词
+  if (text[pos - 1] === '-') return true;
+  const after = text.slice(pos + term.length);
+  const m = after.match(/^-([a-z]+)/i);
+  if (!m) return false;
+  return !HYPHEN_TECH_SUFFIX.test(m[1]!);
+}
+
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function matchPositions(text: string, term: string): number[] {
+  const pattern = /^[\x20-\x7e]+$/.test(term)
+    ? new RegExp(`(?<![a-z0-9.+#])${escapeRe(term)}(?![a-z0-9+#])`, 'gi')
+    : new RegExp(escapeRe(term), 'gi');
+  return [...text.matchAll(pattern)].map((m) => m.index!);
+}
+
+/**
+ * 从 JD 抽技术栈。extra 传入 rubric 里的 profile.stack，
  * 这样你用过但不在通用词表里的东西（内部框架、小众库）也能命中。
  */
 export function parseTechStack(jd: string, extra: string[] = []): Tristate<string[]> {
@@ -262,21 +317,42 @@ export function parseTechStack(jd: string, extra: string[] = []): Tristate<strin
     // 长词优先，避免 "go" 抢在 "mongodb" 前面
     .sort((a, b) => b.length - a.length);
 
+  // 第一轮：只收不会有歧义的词，顺便记下它们的位置
   const hits = new Set<string>();
-  let firstIdx = -1;
+  const anchorPositions: number[] = [];
+  const ambiguousCandidates: { term: string; positions: number[] }[] = [];
+
   for (const term of vocab) {
-    if (term.length < 2) continue;
-    // 纯 ASCII 词要求词边界，否则 "go" 会命中 "django"、"algorithm"
-    const pattern = /^[\x20-\x7e]+$/.test(term)
-      ? new RegExp(`(?<![a-z0-9.+#])${term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?![a-z0-9+#])`, 'i')
-      : new RegExp(term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-    const m = lower.match(pattern);
-    if (m?.index !== undefined) {
+    if (term.length < 1) continue;
+    const positions = matchPositions(lower, term);
+    if (positions.length === 0) continue;
+    if (AMBIGUOUS_TERMS.has(term)) {
+      ambiguousCandidates.push({ term, positions });
+    } else {
       hits.add(canon(term));
-      if (firstIdx === -1) firstIdx = m.index;
+      anchorPositions.push(...positions);
     }
   }
+
+  // 第二轮：有歧义的词必须有上下文佐证 ——
+  // 要么旁边就是一个确凿的技术词，要么附近有「熟悉 / experience with」这类点名式意图词。
+  // 两道都过不了就当它是普通英文词，宁可漏检。
+  for (const { term, positions } of ambiguousCandidates) {
+    const grounded = positions.some((pos) => {
+      // 落在非技术复合词里的直接否掉，后面两道检查都不给机会
+      if (inNonTechCompound(lower, pos, term)) return false;
+      if (anchorPositions.some((a) => Math.abs(a - pos) <= 60)) return true;
+      const window = lower.slice(Math.max(0, pos - 25), pos + 25);
+      return TECH_INTENT.test(window);
+    });
+    if (grounded) {
+      hits.add(canon(term));
+      anchorPositions.push(positions[0]!);
+    }
+  }
+
   if (hits.size === 0) return UNKNOWN<string[]>();
+  const firstIdx = Math.min(...anchorPositions);
   return t([...hits].sort(), 'explicit_jd', excerpt(jd, firstIdx));
 }
 

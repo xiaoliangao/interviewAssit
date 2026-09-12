@@ -7,6 +7,7 @@ import {
   DEFAULT_PROVIDERS,
   DEFAULT_ROUTES,
   buildProvider,
+  collect,
   contentVersion,
   ensureDir,
   explainModule,
@@ -19,6 +20,7 @@ import {
   loadFactsOrThrow,
   loadReposOnly,
   loadRubric,
+  loadSources,
   openDb,
   pastedPosting,
   paths,
@@ -26,8 +28,10 @@ import {
   persistScan,
   proposeClaims,
   rubricReview,
+  runSource,
   scanRepo,
   scoreAllJobs,
+  sourceHealth,
   syncFacts,
   validateFacts,
   type Finding,
@@ -603,6 +607,88 @@ program
       console.log(C.dim('  这两张表指出 rubric 和你真实偏好的偏差。'));
       console.log(C.dim('  改 data/facts/rubric/*.yaml 仍然由你手动做 —— 自动调参会把'));
       console.log(C.dim('  「这周心情不好多忽略了几个」固化成规则。改完 rubric_version 会变，自动触发重算。'));
+    } finally {
+      db.close();
+    }
+  });
+
+program
+  .command('collect')
+  .description('从公开招聘接口采集岗位（无需登录、无封号风险）')
+  .option('--source <id>', '只跑这一个源')
+  .option('--limit <n>', '单源最多取多少条', '200')
+  .option('--dry', '只抓不入库，看看格式对不对', false)
+  .action(async (opts) => {
+    const all = loadSources();
+    if (all.length === 0) {
+      console.log('data/facts/sources.yaml 里没有采集源。');
+      console.log(C.dim('  跑 `assit init` 会生成带注释的模板。'));
+      console.log(C.dim('  国内平台（BOSS / 51job / 猎聘）要登录，不走这条通道 ——'));
+      console.log(C.dim('  在扩展做出来之前用 `assit ingest` 手动粘贴，效果一样。'));
+      return;
+    }
+    const targets = (opts.source ? all.filter((s) => s.id === opts.source) : all)
+      .filter((s) => s.enabled);
+    if (targets.length === 0) throw new Error(`没有启用的采集源匹配 ${opts.source ?? '(全部)'}`);
+
+    let extraTech: string[] = [];
+    try { extraTech = loadRubric().rubric.profile.stack; } catch { /* 可选 */ }
+
+    const db = openDb();
+    try {
+      for (const src of targets) {
+        process.stdout.write(`${src.id.padEnd(28)} `);
+        if (opts.dry) {
+          const r = await collect(src, { limit: Number(opts.limit) });
+          console.log(`抓到 ${r.postings.length} 条（未入库）`);
+          r.postings.slice(0, 3).forEach((p) =>
+            console.log(C.dim(`    ${p.company_name} · ${p.title} · ${p.city ?? '?'}`)));
+          r.rejected.slice(0, 3).forEach((x) => console.log(C.yellow(`    拒绝：${x.reason}`)));
+          continue;
+        }
+        const r = await runSource(db, src, { limit: Number(opts.limit), extraTech });
+        if (!r.ok) {
+          // 单源失败不影响其他源 —— 采集器坏掉是常态不是意外
+          console.log(C.red(`失败：${r.error}`));
+          continue;
+        }
+        console.log(
+          `${C.green('ok')} 抓 ${r.fetched} · 入库 ${r.ingested} · ${C.green(`新增 ${r.newJobs}`)}` +
+            C.dim(` · ${r.durationMs}ms`),
+        );
+        if (r.rejected.length > 0) {
+          console.log(C.yellow(`    ${r.rejected.length} 条被拒绝：${r.rejected[0]!.reason}`));
+        }
+      }
+      console.log('');
+      console.log(C.dim('  下一步：assit score'));
+    } finally {
+      db.close();
+    }
+  });
+
+program
+  .command('sources')
+  .description('采集源健康度。采集器坏掉是常态，这张表要能一眼看到')
+  .action(() => {
+    const all = loadSources();
+    if (all.length === 0) { console.log('还没有配置采集源。'); return; }
+    const db = openDb();
+    try {
+      const health = sourceHealth(db, all);
+      console.log(C.bold('源                            平台        上次成功            连续失败  岗位数'));
+      for (const h of health) {
+        const fail = h.consecutiveFailures > 0
+          ? C.red(String(h.consecutiveFailures).padStart(8))
+          : C.dim('       0');
+        const okAt = h.lastOkAt ?? C.dim('从未');
+        console.log(
+          `${h.sourceId.padEnd(29)} ${h.platform.padEnd(11)} ${String(okAt).padEnd(19)} ${fail}  ${String(h.totalJobs).padStart(6)}`,
+        );
+        if (h.lastError) console.log(C.red(`    最近错误：${h.lastError.slice(0, 120)}`));
+      }
+      console.log('');
+      console.log(C.dim('  连续失败 ≥3 通常意味着对方改版了。别硬猜页面结构 —— 去看一眼再改采集器。'));
     } finally {
       db.close();
     }

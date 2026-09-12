@@ -6,7 +6,7 @@
 
 设计见 [`docs/DESIGN.md`](docs/DESIGN.md)，评审与修订计划见 [`docs/plan.md`](docs/plan.md)。
 
-当前进度：**M0a + M0b 已完成**（事实库 → 定制简历；项目解析 → 候选主张）。
+当前进度：**M0a + M0b + M1 已完成**（事实库 → 定制简历；项目解析 → 候选主张；岗位采集 → 可解释打分）。
 
 ## 快速开始
 
@@ -49,6 +49,13 @@ pnpm assit resume --jd jd.md --target backend
 | `assit authors <path>` | 列出仓库里的 git 身份，用来填 `repos.yaml` 的 `authors` |
 | `assit scan` | 扫描仓库：结构层 + 归因层 + 求交（**不调模型**） |
 | `assit propose --repo <name>` | 解读你碰过的模块，生成候选主张 + 复核清单（调模型） |
+| `assit ingest` | 粘贴入库：零风险、覆盖一切平台（含 BOSS）。`--clipboard` 直接读剪贴板 |
+| `assit collect` | 从公开招聘接口采集（Greenhouse / Lever / Ashby / 任意 JSON-LD 页面） |
+| `assit sources` | 采集源健康度 |
+| `assit score` | 岗位池打分。`--force` 重算 |
+| `assit why <jobId>` | 展开一个岗位的完整打分证据 |
+| `assit ignore <jobId> --reason` | 忽略并记原因（会被 rubric-review 消费） |
+| `assit rubric-review` | 每周复盘：高分被忽略 / 低分被投递的岗位 |
 | `assit providers` | 探测可用模型，显示各自能处理的最高敏感级 |
 | `assit doctor` | 环境自检 |
 
@@ -83,6 +90,31 @@ assit propose --repo order-service     # 调模型，受 visibility 拦截
 > 模块共 8 个文件、21 次提交、另有 3 位作者参与。我的部分：6 次提交、+340/-180 行，占该模块全部改动的 62%。
 
 产出两样东西：`data/facts/claims/*.json`（状态一律**待确认**，进不了最终 PDF）和一份复核清单，上面列着等你回答的追问题。**答不上来的，就不要把对应的主张写进简历** —— 这正是整套东西存在的意义。
+
+## 岗位池与可解释打分
+
+```bash
+assit ingest --clipboard --company 某某科技 --title 后端工程师 --city 杭州 --salary "40-60K·15薪"
+assit collect          # 公开接口，无需登录、无封号风险
+assit score
+assit why <jobId>      # 这个分数凭什么
+```
+
+**先有粘贴通道，才有采集器。** 粘贴零风险、零维护、覆盖一切平台 —— 意味着浏览器扩展
+做出来之前，BOSS 的岗位就能进岗位池了。后面每个采集器都只是「省掉复制粘贴」。
+
+打分三段式：**硬门槛**（不过不淘汰，只沉底 —— JD 门槛常常虚标）→ **加权 rubric**
+（未披露的维度不计入分母）→ **封顶规则**。规则写在 `data/facts/rubric/*.yaml`，
+`rubric_version` 由文件内容 hash 派生。
+
+```
+原始分 89 → 最终分 89
+  core_stack    33/40  JD 要求 6 项，命中 5 项：go、helm、kubernetes、mysql、redis；缺 java
+                JD 原文：「…推动 Kubernetes 上的标准化…」
+  experience    15/15  JD 要求 5 年，你 5 年
+  salary        13/15  40-60K·15薪 → 年包约 75.0 万；你的下限 54.0 万
+  schedule        —    未披露，不计入分母
+```
 
 ## 四条不会松动的规则
 
@@ -121,6 +153,9 @@ packages/core/       全部领域逻辑，零 UI 依赖
   db/                better-sqlite3 + 编号 SQL 迁移
   facts/             档案、主张账本、校验器、同步
   repomap/           结构层 + 归因层 + 求交 + 解读层 + 候选主张
+  collectors/        公开接口采集 + 契约测试 + 采集源健康度
+  jobs/              三态解析、归一化、入库、去重
+  scoring/           硬门槛 / rubric / 封顶 / score_trace / rubric-review
   models/            provider 抽象、任务路由、visibility 拦截、脱敏、缓存、用量
   resume/            主张选择、诚实性闸门、HTML/PDF 渲染、对照表
   dedup/             公司归并、岗位身份键、投递冷却
