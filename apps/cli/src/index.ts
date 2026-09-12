@@ -7,12 +7,16 @@ import {
   DEFAULT_PROVIDERS,
   DEFAULT_ROUTES,
   buildProvider,
+  complete,
   collect,
+  addQuestion,
   addTurn,
   claimDrillStats,
   clearLock,
   currentProfileVersion,
   detectEngine,
+  drillBoard,
+  dueToday,
   endSession,
   ensureDir,
   explainModule,
@@ -29,6 +33,7 @@ import {
   loadRubric,
   deleteRecordingAudio,
   gatherProbeContext,
+  gradeQuestion,
   generateProbes,
   listRecordings,
   AgentBrowserCliBridge,
@@ -40,6 +45,7 @@ import {
   loadSources,
   openDb,
   pastedPosting,
+  parseSplitOutput,
   paths,
   pipeline,
   preflight,
@@ -1252,6 +1258,115 @@ program
       console.log('');
       console.log(C.dim('  答砸最多的排最前 —— 那正是下一场最该准备的。'));
       console.log(C.dim('  「问过 0 次」的也值得注意：没被追问过的主张，可信度没有被验证过。'));
+    } finally {
+      db.close();
+    }
+  });
+
+program
+  .command('quiz')
+  .description('今天该复习什么。真实面试答错的题排最前')
+  .option('--limit <n>', '', '20')
+  .option('--grade <spec>', '记一次评分：<questionId>:<0-5>')
+  .action((opts) => {
+    const db = openDb();
+    try {
+      if (opts.grade) {
+        const [qid, g] = String(opts.grade).split(':');
+        const grade = Number(g);
+        if (!qid || Number.isNaN(grade) || grade < 0 || grade > 5) {
+          throw new Error('格式是 --grade <questionId>:<0-5>');
+        }
+        const r = gradeQuestion(db, qid, grade as 0 | 1 | 2 | 3 | 4 | 5);
+        console.log(`${C.green('ok')} 下次 ${r.dueInDays} 天后（${r.nextReviewAt.slice(0, 10)}）`);
+        if (grade < 3) console.log(C.dim('  <3 算没答上来：重复次数归零，明天再来。'));
+        return;
+      }
+      const rows = dueToday(db, Number(opts.limit));
+      if (rows.length === 0) {
+        const b = drillBoard(db);
+        console.log(b.total === 0 ? '题库是空的。' : C.green('今天没有到期的题。'));
+        return;
+      }
+      for (const q of rows) {
+        const cred = q.credibility === 'verified' ? C.green('[真题]')
+          : q.credibility === 'secondhand' ? C.yellow('[二手]') : C.dim('[未核实]');
+        console.log('');
+        console.log(`${cred} ${C.bold(q.content)}`);
+        console.log(C.dim(`  ${q.topic ?? '未分类'} · 来源 ${q.sourceRef} · 复习过 ${q.repetitions} 次`));
+        console.log(C.dim(`  assit quiz --grade ${q.id}:<0-5>`));
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+program
+  .command('questions [action]')
+  .description('题库：add 录入一道题，split 把整段面经拆成候选题（不自动入库）')
+  .option('--content <c>', '题目')
+  .option('--topic <t>', '主题')
+  .option('--source-type <t>', 'web_scrape | manual | real_interview | claim_derived | official_doc', 'manual')
+  .option('--source-ref <r>', '**必填**：URL、面经出处、或「2026-09-12 某某一面」')
+  .option('--file <f>', 'split：面经原文文件')
+  .action(async (action, opts) => {
+    const db = openDb();
+    try {
+      if (action === 'add') {
+        const r = addQuestion(db, {
+          content: opts.content ?? '', topic: opts.topic,
+          sourceType: opts.sourceType, sourceRef: opts.sourceRef ?? '',
+        });
+        console.log(r.created ? `${C.green('added')} ${r.id}`
+          : r.upgraded ? `${C.yellow('已存在，可信度提升了')} ${r.id}`
+          : `${C.dim('已存在，跳过')} ${r.id}`);
+        return;
+      }
+      if (action === 'split') {
+        if (!opts.file) throw new Error('--file 指向面经原文');
+        if (!opts.sourceRef) throw new Error('--source-ref 必填：没有来源的题进了库就再也分不清');
+        const text = fs.readFileSync(opts.file, 'utf8');
+        const r = await complete(
+          {
+            task: 'question_answer',
+            visibility: 'public',
+            system: '把面经原文里的面试题逐条抽出来。只要题目，不要「面试官人很好」这类句子。'
+              + '输出 JSON 数组：[{"content":"...","topic":"..."}]，不要别的。',
+            prompt: text.slice(0, 12000),
+          },
+          { db },
+        );
+        const cands = parseSplitOutput(r.text);
+        console.log(C.bold(`拆出 ${cands.length} 道候选题。**没有入库** —— 挑你要的逐条 add：`));
+        cands.forEach((c, i) => {
+          console.log('');
+          console.log(`${i + 1}. ${c.content}`);
+          console.log(C.dim(`   assit questions add --content ${JSON.stringify(c.content)} `
+            + `--topic ${JSON.stringify(c.topic ?? '')} --source-type manual --source-ref ${JSON.stringify(opts.sourceRef)}`));
+        });
+        console.log('');
+        console.log(C.dim('  不自动入库是故意的：模型会把「面试官人很好」也拆成一道题，'));
+        console.log(C.dim('  而那种噪音进了库就很难清。'));
+        return;
+      }
+
+      const b = drillBoard(db);
+      console.log(`题库 ${b.total} 道 · 今天到期 ${b.dueNow} 道`);
+      console.log(C.dim(`  可信度：${Object.entries(b.byCredibility).map(([k, v]) => `${k} ${v}`).join('　') || '—'}`));
+      if (b.byTopic.length > 0) {
+        console.log('');
+        console.log(C.bold('主题        总数  到期'));
+        for (const t of b.byTopic) {
+          console.log(`${t.topic.padEnd(11)} ${String(t.total).padStart(4)} ${String(t.due).padStart(5)}`);
+        }
+      }
+      if (b.weakest.length > 0) {
+        console.log('');
+        console.log(C.bold('错题本') + C.dim('（真实面试答错的排最前）'));
+        for (const w of b.weakest.slice(0, 10)) {
+          console.log(`  ${w.origin === 'real_interview' ? C.red('真题') : C.dim('刷题')} ${w.content.slice(0, 50)}`);
+        }
+      }
     } finally {
       db.close();
     }
