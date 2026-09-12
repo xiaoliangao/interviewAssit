@@ -11,10 +11,14 @@ import {
   collect,
   addQuestion,
   addTurn,
+  CATEGORY_TO_EVENT,
   claimDrillStats,
+  claimsToReview,
+  classifyBySubject,
   clearLock,
   currentProfileVersion,
   detectEngine,
+  detectBackend,
   drillBoard,
   dueToday,
   endSession,
@@ -22,6 +26,7 @@ import {
   explainModule,
   findChrome,
   generateResume,
+  fetchRecent,
   funnel,
   guardStatus,
   ignoreJob,
@@ -33,7 +38,9 @@ import {
   loadRubric,
   deleteRecordingAudio,
   gatherProbeContext,
+  getPassword,
   gradeQuestion,
+  knownDomainsFromApplications,
   generateProbes,
   listRecordings,
   AgentBrowserCliBridge,
@@ -43,6 +50,8 @@ import {
   fetchUpstreamEntries,
   loadRegistry,
   loadSources,
+  logApplicationEvent,
+  setPassword,
   openDb,
   pastedPosting,
   parseSplitOutput,
@@ -68,6 +77,7 @@ import {
   scoreAllJobs,
   sourceHealth,
   writeBackRegistry,
+  writeIcs,
   syncFacts,
   transcribeRecording,
   validateFacts,
@@ -1367,6 +1377,135 @@ program
           console.log(`  ${w.origin === 'real_interview' ? C.red('真题') : C.dim('刷题')} ${w.content.slice(0, 50)}`);
         }
       }
+    } finally {
+      db.close();
+    }
+  });
+
+program
+  .command('mail [action] [arg]')
+  .description('邮箱：login 存凭据到系统钥匙串，scan 只读扫一遍并提议事件')
+  .option('--host <h>', 'IMAP 主机，如 imap.qq.com')
+  .option('--days <n>', 'scan：看最近几天', '7')
+  .option('--apply', 'scan：把提议的事件写进 application_events（仍是**待确认**）', false)
+  .action(async (action, arg, opts) => {
+    if (action === 'login') {
+      if (!arg) throw new Error('用法：assit mail login <邮箱>');
+      if (detectBackend() === 'none') {
+        console.log(C.red('找不到系统钥匙串。'));
+        console.log(C.dim('  不会退化成明文文件 —— data/ 会被备份、同步到云盘、'));
+        console.log(C.dim('  在你打包日志发给别人排查时一起出去。'));
+        console.log(C.dim('  Linux：apt install libsecret-tools'));
+        return;
+      }
+      const pw = await new Promise<string>((resolve) => {
+        process.stdout.write('应用专用密码（不回显，直接粘贴后回车）：');
+        const stdin = process.stdin;
+        stdin.setRawMode?.(true);
+        let buf = '';
+        stdin.on('data', (d) => {
+          const s2 = d.toString();
+          if (s2 === '\r' || s2 === '\n') {
+            stdin.setRawMode?.(false);
+            stdin.pause();
+            process.stdout.write('\n');
+            resolve(buf);
+          } else if (s2 === '\u0003') {
+            process.exit(1);
+          } else if (s2 === '\u007f') {
+            buf = buf.slice(0, -1);
+          } else {
+            buf += s2;
+          }
+        });
+      });
+      setPassword(arg, pw);
+      console.log(`${C.green('ok')} 已存入系统钥匙串（服务名 assit-interview）`);
+      console.log(C.dim('  凭据不进 SQLite、不进配置文件、不进环境变量。'));
+      console.log(C.dim(`  扫信：assit mail scan --host imap.xxx.com ${arg}`));
+      return;
+    }
+
+    if (action === 'scan') {
+      if (!arg) throw new Error('用法：assit mail scan --host <imap 主机> <邮箱>');
+      if (!opts.host) throw new Error('--host 必填，如 imap.qq.com / imap.gmail.com');
+      if (!getPassword(arg)) throw new Error(`钥匙串里没有 ${arg} 的密码。先跑 assit mail login ${arg}`);
+
+      const db = openDb();
+      try {
+        const known = knownDomainsFromApplications(db);
+        const r = await fetchRecent(
+          { user: arg, host: opts.host },
+          { since: new Date(Date.now() - Number(opts.days) * 86400000), knownDomains: known },
+        );
+        console.log(`扫过 ${r.seen} 封，白名单放行 ${r.kept} 封。`);
+        const skipped = Object.entries(r.skippedReasons);
+        if (skipped.length > 0) {
+          console.log(C.dim('  被挡掉的（只留统计，正文一个字都没带出来）：'));
+          skipped.forEach(([why, n]) => console.log(C.dim(`    ${n} 封 · ${why}`)));
+        }
+        if (r.kept === 0) return;
+
+        console.log('');
+        for (const m of r.mails) {
+          const cat = classifyBySubject(m.subject);
+          const ev = cat ? CATEGORY_TO_EVENT[cat] : null;
+          console.log(C.bold(m.subject));
+          console.log(C.dim(`  ${m.from} · ${m.date.slice(0, 10)} · ${m.filterReason}`));
+          console.log(C.dim(`  规则判定：${cat ?? '判不了（该问模型了）'}${ev ? ` → 事件 ${ev}` : ''}`));
+          if (m.redacted.length > 0) console.log(C.dim(`  已脱敏：${m.redacted.join('、')}`));
+        }
+        console.log('');
+        console.log(C.dim('  这里只提议，不改状态。邮件解析出来的事件一律是**待确认**，'));
+        console.log(C.dim('  要你在投递管线里点过才会改投递状态 —— 一封「很遗憾」可能是另一个岗位的。'));
+      } finally {
+        db.close();
+      }
+      return;
+    }
+
+    console.log('用法：assit mail login <邮箱> | assit mail scan --host <imap> <邮箱>');
+    console.log(C.dim('  IMAP 只读：不标已读、不移动、不删除 —— 这是别人也在用的邮箱。'));
+  });
+
+program
+  .command('calendar <applicationId>')
+  .description('为一场面试生成 .ics，带上这场该复习哪几条主张')
+  .requiredOption('--at <iso>', '开始时间，如 2026-10-01T14:00:00+08:00')
+  .option('--title <t>', '标题')
+  .option('--minutes <n>', '时长', '60')
+  .option('--location <l>', '地点或会议链接')
+  .action((appId, opts) => {
+    const db = openDb();
+    try {
+      const a = db
+        .prepare(
+          `SELECT a.id, c.canonical_name company, j.title_raw title FROM applications a
+             JOIN companies c ON c.id = a.company_id
+             JOIN postings p ON p.id = a.posting_id JOIN jobs j ON j.id = p.job_id
+            WHERE a.id = ?`,
+        )
+        .get(appId) as any;
+      if (!a) throw new Error(`找不到投递记录 ${appId}`);
+      const claims = claimsToReview(db, appId);
+      const file = writeIcs([{
+        uid: `${appId}@assit`,
+        title: opts.title ?? `${a.company} · ${a.title} 面试`,
+        startAt: new Date(opts.at).toISOString(),
+        durationMin: Number(opts.minutes),
+        location: opts.location,
+        claimIds: claims,
+        applicationId: appId,
+      }]);
+      console.log(`${C.green('ok')} ${path.relative(process.cwd(), file)}`);
+      if (claims.length > 0) {
+        console.log(C.dim(`  带上了 ${claims.length} 条要复习的主张：${claims.join('、')}`));
+        console.log(C.dim('  提前一小时提醒 —— 那是复习它们的最后窗口。'));
+      } else {
+        console.log(C.dim('  没找到要复习的主张（这条投递还没关联简历版本，也还没答砸过什么）。'));
+      }
+      console.log(C.dim('  双击导入。刻意不用 osascript 直接写日历 —— 一个悄悄往你工作日历里'));
+      console.log(C.dim('  塞条目的工具，第一次塞错地方你就再也不会信它。'));
     } finally {
       db.close();
     }

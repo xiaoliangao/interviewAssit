@@ -6,6 +6,7 @@ export * from './artifacts.js';
 export * from './audio/index.js';
 export * from './drill/index.js';
 export * from './facts/index.js';
+export * from './mail/index.js';
 export * from './models/index.js';
 export * from './dedup/index.js';
 export * from './forms/index.js';
