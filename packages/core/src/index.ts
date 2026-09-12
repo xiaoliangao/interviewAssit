@@ -6,4 +6,6 @@ export * from './facts/index.js';
 export * from './models/index.js';
 export * from './dedup/index.js';
 export * from './repomap/index.js';
+export * from './jobs/index.js';
+export * from './scoring/index.js';
 export * from './resume/index.js';

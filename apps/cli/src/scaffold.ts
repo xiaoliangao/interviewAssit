@@ -127,29 +127,63 @@ repos: []
   #   exclude: ["docs", "scripts/legacy"]
 `;
 
-const RUBRIC = `# 打分规则（M1 用）。rubric_version 由这个文件的内容 hash 派生，
-# 不要手写版本号 —— 手写的一定会忘记改。
+const RUBRIC = `# 打分规则。rubric_version 由这个文件的内容 hash 派生 ——
+# 不要手写版本号，手写的一定会忘记改，然后你就有两套规则产出的分数
+# 共用一个标签，永远对不上账。
+#
+# 打分是「这个岗位对你合不合适」，不是「这个岗位好不好」，
+# 所以下面 profile 那一段写的是**你**。
 
+note: v1
+
+profile:
+  degree: 本科              # 大专 | 本科 | 硕士 | 博士
+  exp_years: 5
+  cities: [杭州, 上海]
+  accept_remote: true
+
+  salary_floor_yuan: 45000  # 月薪下限：低于它这一项记 0 分
+  salary_target_yuan: 65000 # 月薪目标：到这个数这一项满分
+
+  # 你的技术栈。打分时和 JD 的要求求交。
+  # 写你真能扛住追问的，不是你听说过的。
+  stack: [go, redis, mysql, kubernetes, kafka, docker, linux]
+
+  acceptable_schedules: [双休, 弹性]
+
+# 各维度权重。未披露的维度不计入分母，所以这里的总和不一定是 100。
 weights:
-  core_stack: 40        # 技术栈命中
-  domain_fit: 15        # 业务领域相关度
-  salary: 15            # 薪资结构
-  commute: 10           # 城市 / 通勤
-  schedule: 10          # 作息（大小周等）
-  company: 10           # 公司性质（含外包概率）
+  core_stack: 40
+  experience: 15
+  salary: 15
+  location: 10
+  schedule: 10
+  company: 10
 
+# 硬门槛。不过**不淘汰**，只标记 hard_gaps 并沉底 ——
+# JD 的门槛常常是虚标的，真去聊了往往也能谈。
 hard_gates:
   - key: education
-    rule: "JD 要求学历 <= 我的最高学历"
   - key: exp_years_min
-    rule: "JD 要求年限 <= 我的年限 + 1"
+    slack: 1                # 要 5 年而你 4 年，仍算通过
 
+# 封顶规则。when 是封闭枚举，不是可写表达式：
+#   core_stack_below_half | core_stack_zero | hard_gate_failed
+#   outsourcing_likely | schedule_bad | salary_below_floor | coverage_low
 caps:
-  - when: "core_stack 得分 < max*0.5"
+  - label: missing_core_stack
+    when: core_stack_below_half
     final_score_max: 55
-    label: missing_core_stack
+  - label: likely_outsourcing
+    when: outsourcing_likely
+    threshold: 0.6
+    final_score_max: 50
+  - label: schedule_unacceptable
+    when: schedule_bad
+    final_score_max: 45
 
-# 未知的维度不计入分母，不记 0 分。
+# 未知维度不计入分母。记 0 分等于对信息披露少的岗位加负分 ——
+# 而那恰好是你最该警惕的一批岗位。
 unknown_policy: exclude_from_denominator
 `;
 

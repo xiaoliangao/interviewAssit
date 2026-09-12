@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { Command } from 'commander';
@@ -6,20 +7,27 @@ import {
   DEFAULT_PROVIDERS,
   DEFAULT_ROUTES,
   buildProvider,
+  contentVersion,
   ensureDir,
   explainModule,
   findChrome,
   generateResume,
+  ignoreJob,
+  ingestPosting,
   isGitRepo,
   listAuthors,
   loadFactsOrThrow,
   loadReposOnly,
+  loadRubric,
   openDb,
+  pastedPosting,
   paths,
   persistExplanation,
   persistScan,
   proposeClaims,
+  rubricReview,
   scanRepo,
+  scoreAllJobs,
   syncFacts,
   validateFacts,
   type Finding,
@@ -30,7 +38,7 @@ import { scaffold } from './scaffold.js';
 const program = new Command();
 program
   .name('assit')
-  .description('个人求职工作台 · M0 命令行入口（事实库 → 定制简历）')
+  .description('个人求职工作台 · 事实库 → 定制简历 → 岗位池 → 可解释打分')
   .version('0.0.1');
 
 const C = {
@@ -369,6 +377,232 @@ program
         process.exit(2);
       }
       throw e;
+    } finally {
+      db.close();
+    }
+  });
+
+function currentProfileVersion(): string {
+  // 简历版本决定「这份 JD 对我合不合适」，所以它必须进 score 的唯一键。
+  // 还没生成过简历时用事实库快照当版本 —— 至少能区分「我改过事实库之后」。
+  const facts = validateFacts();
+  const ids = (facts.facts?.claims ?? []).map((c) => c.id).sort().join(',');
+  return `facts-${contentVersion(ids)}`;
+}
+
+program
+  .command('ingest')
+  .description('粘贴入库：零风险、覆盖一切平台（包括 BOSS），扩展做出来之前就能用')
+  .option('--file <path>', 'JD 文本文件；不给则从 stdin 读')
+  .option('--clipboard', '从剪贴板读（macOS pbpaste）', false)
+  .option('--url <url>', '岗位链接，用来识别平台')
+  .option('--company <name>', '公司名')
+  .option('--title <title>', '职位名')
+  .option('--city <city>', '城市')
+  .option('--salary <raw>', '薪资原文，如 25-40K·15薪')
+  .action((opts) => {
+    let jdText = '';
+    if (opts.clipboard) jdText = execFileSync('pbpaste', { encoding: 'utf8' });
+    else if (opts.file) jdText = fs.readFileSync(path.resolve(opts.file), 'utf8');
+    else jdText = fs.readFileSync(0, 'utf8');
+    if (!jdText.trim()) throw new Error('JD 是空的');
+
+    const db = openDb();
+    try {
+      // 技术词表的扩展来自 rubric 的 profile.stack，**不是 claim tags**。
+      // claim tags 是自由文本，里面混着「高并发」「订单」这种业务概念；
+      // 把它们当技术词会污染 JD 的要求列表，进而虚增分母、压低匹配分。
+      // rubric stack 是你显式维护的一份「我的技术栈」，正好适合干这个。
+      let extraTech: string[] = [];
+      try {
+        extraTech = loadRubric().rubric.profile.stack;
+      } catch {
+        /* 还没配 rubric 也能入库，只是不扩展词表 */
+      }
+      const posting = pastedPosting({
+        url: opts.url, company: opts.company, title: opts.title,
+        city: opts.city, salaryRaw: opts.salary, jdText,
+      });
+      const r = ingestPosting(db, posting, { extraTech });
+
+      const label: Record<string, string> = {
+        new_job: C.green('新岗位'),
+        merged_into_existing: C.yellow('合并到已有岗位'),
+        posting_updated: C.dim('挂牌已更新'),
+        jd_changed: C.yellow('JD 有变更'),
+        unchanged: C.dim('无变化'),
+      };
+      console.log(`${label[r.outcome]}  ${posting.company_name} · ${posting.title}`);
+      console.log(C.dim(`  平台 ${posting.platform} · identity ${r.identityKey.slice(0, 12)}`));
+      console.log(
+        `  已披露 ${r.coverage.known}/${r.coverage.total} 个维度` +
+          (r.jdVersions > 1 ? C.yellow(` · 这个岗位已有 ${r.jdVersions} 个 JD 版本`) : ''),
+      );
+      for (const [k, v] of Object.entries(r.attrs)) {
+        const t = v as { value: unknown; confidence: string };
+        const shown = t.confidence === 'unknown'
+          ? C.dim('未披露')
+          : Array.isArray(t.value) ? (t.value as string[]).join('、') : String(t.value);
+        console.log(`    ${k.padEnd(16)} ${shown}`);
+      }
+      r.notes.forEach((n) => console.log(C.yellow(`  ⚠ ${n}`)));
+      console.log('');
+      console.log(C.dim('  下一步：assit score'));
+    } finally {
+      db.close();
+    }
+  });
+
+program
+  .command('score')
+  .description('给岗位池打分：硬门槛 → 加权 rubric → 封顶，产出可解释 trace')
+  .option('--rubric <name>', '用哪个 rubric 文件')
+  .option('--force', '重算已有分数', false)
+  .option('--job <id>', '只打这一个')
+  .option('--top <n>', '列出前几个', '20')
+  .action((opts) => {
+    const loaded = loadRubric(opts.rubric);
+    const pv = currentProfileVersion();
+    const db = openDb();
+    try {
+      const scored = scoreAllJobs(db, loaded, {
+        profileVersion: pv, force: Boolean(opts.force), jobId: opts.job,
+      });
+      if (scored.length === 0) {
+        console.log('岗位池是空的。先 `assit ingest` 粘一个进来。');
+        return;
+      }
+      console.log(
+        C.dim(`rubric ${path.basename(loaded.file)}@${loaded.version} · profile ${pv}`),
+      );
+      console.log('');
+      console.log(C.bold(' 分数  覆盖   公司 · 职位'));
+      for (const s of scored.slice(0, Number(opts.top))) {
+        const t = s.trace;
+        const gap = t.hard_gaps.length > 0 ? C.red(' ⚑') : '  ';
+        const low = t.coverage < 0.5 ? C.yellow(`${(t.coverage * 100).toFixed(0)}%`) : `${(t.coverage * 100).toFixed(0)}%`;
+        console.log(
+          `${String(t.final_score).padStart(4)}${gap} ${low.padStart(5)}   ` +
+            `${s.company} · ${s.title}` + C.dim(`  ${s.salaryRaw ?? '薪资未披露'}`),
+        );
+        if (t.capped_by) console.log(C.yellow(`        被「${t.capped_by}」封顶（原始分 ${t.raw_score}）`));
+        else if (t.caps.length) console.log(C.dim(`        触发规则：${t.caps.join('、')}（未影响分数）`));
+        if (t.hard_gaps.length) console.log(C.red(`        硬缺口：${t.hard_gaps.join('；')}`));
+        if (t.injection_flags.length) {
+          console.log(C.red(`        ⚠ JD 里检出可疑指令性文本：${t.injection_flags.join(' / ')}（已打标，未改分数）`));
+        }
+      }
+      console.log('');
+      console.log(C.dim('  ⚑ = 有硬门槛未过（不淘汰，只沉底 —— JD 门槛常常虚标）'));
+      console.log(C.dim('  覆盖率低不代表岗位差，代表你看不清它。用 assit why <job-id> 看逐项证据。'));
+    } finally {
+      db.close();
+    }
+  });
+
+program
+  .command('why')
+  .description('展开一个岗位的完整打分证据')
+  .argument('<jobId>')
+  .action((jobId: string) => {
+    const loaded = loadRubric();
+    const db = openDb();
+    try {
+      const [s] = scoreAllJobs(db, loaded, { profileVersion: currentProfileVersion(), jobId });
+      if (!s) throw new Error(`没有 job ${jobId}`);
+      const t = s.trace;
+      console.log(C.bold(`${s.company} · ${s.title}`) + C.dim(`  ${s.city ?? ''} ${s.salaryRaw ?? ''}`));
+      console.log('');
+      console.log(`原始分 ${t.raw_score} → 最终分 ${C.bold(String(t.final_score))}` +
+        (t.capped_by ? C.yellow(`（被「${t.capped_by}」封顶）`) : ''));
+      if (t.caps.length) {
+        const idle = t.caps.filter((c) => c !== t.capped_by);
+        if (idle.length) {
+          console.log(C.dim(`触发但未影响分数的规则：${idle.join('、')}` +
+            '  —— 条件确实成立，只是分数本来就更低'));
+        }
+      }
+      console.log(C.dim(`覆盖 ${(t.coverage * 100).toFixed(0)}% · rubric@${t.rubric_version} · profile ${t.profile_version}`));
+      console.log('');
+      for (const [dim, c] of Object.entries(t.components)) {
+        console.log(`  ${C.green(dim.padEnd(12))} ${String(c.score).padStart(3)}/${c.max_score}  ${c.evidence}`);
+        if (c.jd_quote) console.log(C.dim(`               JD 原文：「${c.jd_quote}」`));
+      }
+      for (const d of t.unknown_dims) {
+        console.log(`  ${C.dim(d.padEnd(12))}   — ${C.dim('未披露，不计入分母')}`);
+      }
+      if (t.gates.length) {
+        console.log('');
+        console.log(C.bold('  硬门槛'));
+        for (const g of t.gates) {
+          const mark = g.status === 'pass' ? C.green('✓') : g.status === 'fail' ? C.red('✗') : C.dim('?');
+          console.log(`  ${mark} ${g.key.padEnd(14)} ${g.detail}`);
+        }
+      }
+      if (t.injection_flags.length) {
+        console.log('');
+        console.log(C.red(`  ⚠ 可疑指令性文本：${t.injection_flags.join(' / ')}`));
+        console.log(C.dim('    已打标但未改分数 —— 自动降分反而会被用来攻击竞品岗位的排序。'));
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+program
+  .command('ignore')
+  .description('忽略一个岗位并记下原因（原因会被 rubric-review 消费）')
+  .argument('<jobId>')
+  .requiredOption('--reason <text>', '为什么不投')
+  .action((jobId: string, opts) => {
+    const db = openDb();
+    try {
+      const row = db
+        .prepare('SELECT final_score FROM job_scores WHERE job_id=? ORDER BY created_at DESC LIMIT 1')
+        .get(jobId) as { final_score: number } | undefined;
+      ignoreJob(db, jobId, opts.reason, row?.final_score ?? null);
+      console.log(`已忽略 ${jobId}：${opts.reason}`);
+      console.log(C.dim('  每周跑一次 assit rubric-review，看你的 rubric 和真实偏好差在哪。'));
+    } finally {
+      db.close();
+    }
+  });
+
+program
+  .command('rubric-review')
+  .description('每周复盘：高分被忽略 / 低分被投递的岗位，指出 rubric 的偏差')
+  .option('--high <n>', '「高分」阈值', '75')
+  .option('--low <n>', '「低分」阈值', '55')
+  .action((opts) => {
+    const loaded = loadRubric();
+    const db = openDb();
+    try {
+      const r = rubricReview(db, currentProfileVersion(), loaded.version, {
+        highThreshold: Number(opts.high), lowThreshold: Number(opts.low),
+      });
+      console.log(C.bold(`高分（≥${opts.high}）却被你忽略的岗位`));
+      if (r.highScoreIgnored.length === 0) console.log(C.dim('  （无）'));
+      for (const x of r.highScoreIgnored) {
+        console.log(`  ${String(x.score ?? '?').padStart(3)}  ${x.company} · ${x.title}`);
+        console.log(C.dim(`       原因：${x.reason}`));
+      }
+      console.log('');
+      console.log(C.bold(`低分（<${opts.low}）却被你投了的岗位`));
+      if (r.lowScoreApplied.length === 0) console.log(C.dim('  （无）'));
+      for (const x of r.lowScoreApplied) {
+        console.log(`  ${String(x.score ?? '?').padStart(3)}  ${x.company} · ${x.title}`);
+      }
+      if (r.reasonClusters.length > 0) {
+        console.log('');
+        console.log(C.bold('忽略原因聚类'));
+        for (const c of r.reasonClusters) {
+          console.log(`  ${String(c.count).padStart(3)} 次  ${c.reason}` + C.dim(`  平均分 ${c.avgScore ?? '?'}`));
+        }
+      }
+      console.log('');
+      console.log(C.dim('  这两张表指出 rubric 和你真实偏好的偏差。'));
+      console.log(C.dim('  改 data/facts/rubric/*.yaml 仍然由你手动做 —— 自动调参会把'));
+      console.log(C.dim('  「这周心情不好多忽略了几个」固化成规则。改完 rubric_version 会变，自动触发重算。'));
     } finally {
       db.close();
     }
