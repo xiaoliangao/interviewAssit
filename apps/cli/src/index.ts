@@ -22,6 +22,9 @@ import {
   loadRubric,
   deleteRecordingAudio,
   listRecordings,
+  applyRegistrySync,
+  doctorRegistry,
+  fetchUpstreamEntries,
   loadRegistry,
   loadSources,
   openDb,
@@ -34,12 +37,14 @@ import {
   registryStats,
   registryToSourcesYaml,
   recoverStale,
+  planRegistrySync,
   reparseJobs,
   rubricReview,
   runSource,
   scanRepo,
   scoreAllJobs,
   sourceHealth,
+  writeBackRegistry,
   syncFacts,
   validateFacts,
   validateRubricFile,
@@ -692,10 +697,92 @@ program
     }
   });
 
+/**
+ * `assit sources doctor`。
+ *
+ * 输出里刻意把「真采到了」和「只是主页能开」分成两栏显示 ——
+ * 把后者当成前者，是这个功能最容易骗自己的地方。
+ */
+async function sourcesDoctor(opts: {
+  only?: string;
+  homepages?: boolean;
+  write?: boolean;
+}): Promise<void> {
+  const entries = loadRegistry();
+  if (entries.length === 0) {
+    console.log('注册表是空的。');
+    return;
+  }
+  const only = opts.only ? String(opts.only).split(',').map((x) => x.trim()) : undefined;
+
+  // 用户在 sources.yaml 里怎么配的，doctor 就怎么打 —— 验的必须是他真实的采集路径。
+  const overrides = new Map<string, { browserUa?: boolean }>();
+  try {
+    for (const src of loadSources()) {
+      if (src.platform === 'api') overrides.set(src.id, { browserUa: src.browser_ua });
+    }
+  } catch {
+    /* 没配 sources.yaml 也能 doctor，只是全用诚实 UA */
+  }
+
+  const results = await doctorRegistry(entries, {
+    only,
+    sourceOverrides: overrides,
+    probeHomepages: opts.homepages !== false,
+    onProgress: (done, total, cur) => {
+      if (cur) process.stderr.write(`\r  探测 ${done + 1}/${total} ${cur.padEnd(16)}`);
+      else process.stderr.write('\r'.padEnd(40) + '\r');
+    },
+  });
+
+  const collect = results.filter((r) => r.kind === 'collect');
+  const reach = results.filter((r) => r.kind === 'reachability');
+
+  console.log(C.bold('真跑了一次采集'));
+  if (collect.length === 0) console.log(C.dim('  （没有配了采集路径的条目）'));
+  for (const r of collect) {
+    const mark = r.ok ? C.green(' ✓') : r.status === 'needs_browser_ua' ? C.yellow(' !') : C.red(' ✗');
+    console.log(`${mark}  ${r.id.padEnd(14)} ${String(r.ms + 'ms').padStart(7)}  ${r.detail}`);
+  }
+
+  if (reach.length > 0) {
+    console.log('');
+    console.log(C.bold('只探了主页') + C.dim('  —— 这说明不了能不能采到岗位'));
+    const bad = reach.filter((r) => !r.ok);
+    console.log(C.dim(`  ${reach.length - bad.length} 个主页正常`));
+    for (const r of bad) console.log(`${C.red(' ✗')}  ${r.id.padEnd(14)} ${r.detail}`);
+  }
+
+  if (!opts.write) {
+    console.log('');
+    console.log(C.dim('  只是看看，没有写回。加 --write 把 status / verified_at 写进注册表。'));
+    return;
+  }
+  const wrote = writeBackRegistry(results);
+  const n = wrote.reduce((a, w) => a + w.updated.length, 0);
+  console.log('');
+  if (n === 0) {
+    console.log('注册表没有需要改的。');
+  } else {
+    for (const w of wrote) {
+      for (const u of w.updated) console.log(`${C.yellow('updated')} ${u.id}: ${u.from} → ${u.to}`);
+    }
+  }
+  console.log(C.dim('  verified_at 只在**真采到岗位**时才更新 —— 主页能开不算验证过。'));
+}
+
 program
-  .command('sources')
-  .description('采集源健康度。采集器坏掉是常态，这张表要能一眼看到')
-  .action(() => {
+  .command('sources [action]')
+  .description('采集源健康度（action=doctor 时逐条真打一次并回写注册表）')
+  .option('--only <ids>', 'doctor：只查这几个，逗号分隔')
+  .option('--no-homepages', 'doctor：跳过只能探主页的那些，快很多')
+  .option('--write', 'doctor：把结果写回注册表', false)
+  .action(async (action: string | undefined, opts: any) => {
+    if (action === 'doctor') {
+      await sourcesDoctor(opts);
+      return;
+    }
+    if (action) throw new Error(`不认识的动作 ${action}。可用：doctor`);
     const all = loadSources();
     if (all.length === 0) { console.log('还没有配置采集源。'); return; }
     const db = openDb();
@@ -717,6 +804,58 @@ program
     } finally {
       db.close();
     }
+  });
+
+program
+  .command('registry-sync')
+  .description('从上游同步雇主注册表：拉取 → 显示 diff → 人工确认后才写入')
+  .requiredOption('--repo <owner/name>', 'GitHub 仓库')
+  .requiredOption('--commit <sha>', '**完整 40 位 commit sha**，不接受分支名')
+  .option('--path <file>', '仓库内路径', 'vendor/employer-registry/cn.yaml')
+  .option('--apply', '已经看过 diff，执行写入', false)
+  .option('--include-edited', '连本地手改过的条目也覆盖（默认跳过）', false)
+  .option('--only <ids>', '只应用这几个，逗号分隔')
+  .action(async (opts) => {
+    const src = { repo: opts.repo, commit: opts.commit, filePath: opts.path };
+    const plan = await planRegistrySync(src, loadRegistry());
+
+    console.log(C.dim(`上游 ${plan.url}`));
+    console.log(`上游 ${plan.upstreamCount} 家 · 本地 ${plan.localCount} 家`);
+    if (plan.changes.length === 0) {
+      console.log(C.green('没有差异。'));
+      return;
+    }
+    console.log('');
+    for (const c of plan.changes) {
+      const tag = c.kind === 'add' ? C.green('+ 新增') : c.kind === 'remove' ? C.dim('- 上游已无') : C.yellow('~ 变更');
+      const note = c.locallyEdited && c.kind !== 'remove' ? C.dim('（本地手改过，默认跳过）') : '';
+      console.log(`${tag} ${c.id} ${note}`);
+      for (const f of c.fields) {
+        console.log(C.dim(`      ${f.key}: ${JSON.stringify(f.from) ?? '—'} → ${JSON.stringify(f.to)}`));
+      }
+    }
+
+    if (!opts.apply) {
+      console.log('');
+      console.log(C.bold('没有写入任何东西。'));
+      console.log(C.dim('  注册表里存的是采集器接下来要去请求的 URL —— 被污染的条目会让采集器'));
+      console.log(C.dim('  去打攻击者的服务器，抓回来的东西还会以可信来源的身份进池、进打分、进简历。'));
+      console.log(C.dim('  所以这一步必须有人看。看完了加 --apply。'));
+      return;
+    }
+
+    const entries = await fetchUpstreamEntries(src);
+    const r = applyRegistrySync(plan, entries, {
+      includeLocallyEdited: Boolean(opts.includeEdited),
+      only: opts.only ? String(opts.only).split(',').map((x: string) => x.trim()) : undefined,
+    });
+    console.log('');
+    console.log(`写入 ${path.relative(process.cwd(), r.file)}：新增 ${r.added.length}、更新 ${r.updated.length}、跳过 ${r.skipped.length}`);
+    if (r.skipped.length > 0) {
+      console.log(C.dim(`  跳过的是本地手改过的：${r.skipped.join('、')}　（要覆盖加 --include-edited）`));
+    }
+    console.log(C.dim('  上游条目一律标 unverified —— 别人说它能采，不等于你这里能采。'));
+    console.log(C.dim('  跑一次 `assit sources doctor --write` 才会变成真实状态。'));
   });
 
 program

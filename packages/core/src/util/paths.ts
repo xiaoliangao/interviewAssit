@@ -49,3 +49,16 @@ export function ensureDir(p: string): string {
   fs.mkdirSync(p, { recursive: true });
   return p;
 }
+
+/**
+ * 本地时区的 YYYY-MM-DD。
+ *
+ * **不要用 `toISOString().slice(0,10)`** —— 那是 UTC 日期。
+ * 在 UTC+8，凌晨到早上 8 点之间它会给出「昨天」，
+ * 于是 `verified_at` 显示成前一天，而这个字段的全部意义就是回答
+ * 「这条还新不新」。一个会偶尔差一天的日期字段，比没有更糟。
+ */
+export function todayLocal(d = new Date()): string {
+  const p = (n: number): string => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}

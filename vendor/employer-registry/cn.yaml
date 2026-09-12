@@ -22,7 +22,7 @@ employers:
     channel: api
     adapter: tencent
     status: ok
-    verified_at: 2026-09-12
+    verified_at: 2026-09-13
     note: 公开 GET，零凭据，连 timestamp 都可不带。列表只给岗位职责，任职要求要再打一次详情
 
   - id: bytedance
