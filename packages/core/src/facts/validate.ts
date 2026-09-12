@@ -345,3 +345,22 @@ export function loadFactsOrThrow(opts?: ValidateOptions): FactBase {
 export function factsExist(): boolean {
   return fs.existsSync(paths.profile);
 }
+
+/**
+ * 只读 repos.yaml，不要求档案完整。
+ *
+ * 扫仓库这件事在你填完档案之前就该能做 —— 事实上顺序常常是反的：
+ * 先扫出候选主张，才想起来去补档案。
+ */
+export function loadReposOnly(): ReposFile {
+  const raw = loadRawRepos();
+  if (!raw) return { repos: [] };
+  const r = ReposFile.safeParse(raw.raw);
+  if (!r.success) {
+    throw new Error(
+      `facts/repos.yaml 格式有问题：\n` +
+        r.error.issues.map((i) => `  ${i.path.join('.')}: ${i.message}`).join('\n'),
+    );
+  }
+  return r.data;
+}

@@ -102,13 +102,29 @@ const CLAIM = `{
 }
 `;
 
-const REPOS = `# M0b 项目解析要扫的仓库。只填你手选的 3–5 个，别全量。
-# visibility 决定这个仓库的代码能不能发给云端模型 —— 路由层按它强制拦截。
+const REPOS = `# 项目解析要扫的仓库。只填你手选的 3–5 个，别全量 ——
+# 全量扫的结果是一堆你自己都不想写进简历的噪音候选。
+#
+# 填完跑：
+#   assit authors <local_path>   # 看这个仓库里有哪些 git 身份，把你用过的抄进 authors
+#   assit scan                   # 结构层 + 归因层 + 求交（不调模型）
+#   assit propose --repo <name>  # 解读并生成候选主张（调模型，受 visibility 拦截）
 
 repos: []
   # - full_name: org/order-service
   #   local_path: /Users/you/code/order-service
+  #
+  #   # 决定这个仓库的代码能不能发给云端模型。路由层按它强制拦截，不是标签。
+  #   # private/nda 的仓库没有本地模型就跑不了 propose —— 这是设计如此。
   #   visibility: private
+  #
+  #   # 你在这个仓库用过的 git 身份（邮箱或姓名）。**不填归因结果就是空的。**
+  #   # 人在不同公司、不同时期用不同邮箱是常态，把用过的都列上。
+  #   authors: ["you@company.com", "you@gmail.com"]
+  #
+  #   # 可选：只看这个日期之后的提交。老仓库全量扫会把早年的练手代码算进来。
+  #   since: "2021-01-01"
+  #   exclude: ["docs", "scripts/legacy"]
 `;
 
 const RUBRIC = `# 打分规则（M1 用）。rubric_version 由这个文件的内容 hash 派生，

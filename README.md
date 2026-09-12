@@ -6,7 +6,7 @@
 
 设计见 [`docs/DESIGN.md`](docs/DESIGN.md)，评审与修订计划见 [`docs/plan.md`](docs/plan.md)。
 
-当前进度：**M0a 已完成**（事实库 + 定制简历 + 模型路由 + 守门测试）。
+当前进度：**M0a + M0b 已完成**（事实库 → 定制简历；项目解析 → 候选主张）。
 
 ## 快速开始
 
@@ -46,6 +46,9 @@ pnpm assit resume --jd jd.md --target backend
 | `assit validate [--json]` | 校验事实库 |
 | `assit sync` | 文件 → SQLite |
 | `assit resume --jd <file>` | 生成定制简历。`--draft` 允许带「待确认」主张，`--rewrite` 调模型改措辞 |
+| `assit authors <path>` | 列出仓库里的 git 身份，用来填 `repos.yaml` 的 `authors` |
+| `assit scan` | 扫描仓库：结构层 + 归因层 + 求交（**不调模型**） |
+| `assit propose --repo <name>` | 解读你碰过的模块，生成候选主张 + 复核清单（调模型） |
 | `assit providers` | 探测可用模型，显示各自能处理的最高敏感级 |
 | `assit doctor` | 环境自检 |
 
@@ -55,7 +58,33 @@ pnpm assit resume --jd jd.md --target backend
 pbpaste | pnpm assit resume --jd - --target backend
 ```
 
-## 三条不会松动的规则
+## 从代码里长出简历素材
+
+手写 claim 很累，而且你会忘掉一半做过的事。`scan` + `propose` 把这一步变成「系统提议、你确认」：
+
+```bash
+assit authors ~/code/order-service     # 先看这仓库里有哪些 git 身份
+# 把你用过的邮箱填进 data/facts/repos.yaml 的 authors
+assit scan                             # 不调模型，纯算
+assit propose --repo order-service     # 调模型，受 visibility 拦截
+```
+
+三层，只有最后一层调模型：
+
+| 层 | 干什么 | 调模型 |
+|---|---|---|
+| 结构层 | 目录结构 + import 语句 → 模块划分与依赖边 | 否 |
+| 归因层 | `git log --numstat --author` → 哪些文件是你动的 | 否 |
+| **求交** | 两者交集 = **你实际碰过的架构区域** | 否 |
+| 解读层 | 这个模块干什么、技术选型为什么、面试官会问什么 | 是 |
+
+**求交那一步是关键。** 只有结构图，你会把整个项目吹成自己的；只有 git 归因，你看到一堆零散 commit，写出来是「修复了若干 bug」这种废话。交集出来的那块，正好就是账本里 `boundary` 该填的内容 —— 而且它是算出来的，不是凭印象写的：
+
+> 模块共 8 个文件、21 次提交、另有 3 位作者参与。我的部分：6 次提交、+340/-180 行，占该模块全部改动的 62%。
+
+产出两样东西：`data/facts/claims/*.json`（状态一律**待确认**，进不了最终 PDF）和一份复核清单，上面列着等你回答的追问题。**答不上来的，就不要把对应的主张写进简历** —— 这正是整套东西存在的意义。
+
+## 四条不会松动的规则
 
 这三条在代码层强制，并且有测试证明（`pnpm test`）：
 
@@ -69,7 +98,12 @@ pbpaste | pnpm assit resume --jd - --target backend
 把它当「本地」是错的。没配本地模型时，`private` / `nda` 的载荷会**硬失败**
 并提示你去装一个，而不是悄悄降级发出去。
 
-**③ 岗位去重和投递去重是两件事。**
+**③ 模型指不回具体文件的结论一律丢弃。**
+AI 读代码画架构的幻觉率很高。解读层要求每条结论的 `evidence` 都是这个模块里真实存在的
+文件路径，指不回去的直接扔掉并标「未识别」—— 和打分那边要求 evidence 必须是 JD 原文
+子串是同一套机制。简历上一句编造的技术描述，在面试第二轮就会被拆穿。
+
+**④ 岗位去重和投递去重是两件事。**
 `identity_key`（公司 + 归一化职位 + 城市）回答「这两条是不是同一个岗位」；
 `application_key`（公司 + 职能族 + 90 天窗口）回答「我最近是不是投过这家的这类岗」。
 一个 key 表达不了这两件事。
@@ -86,6 +120,7 @@ packages/contract/   zod schema，三端共用的类型
 packages/core/       全部领域逻辑，零 UI 依赖
   db/                better-sqlite3 + 编号 SQL 迁移
   facts/             档案、主张账本、校验器、同步
+  repomap/           结构层 + 归因层 + 求交 + 解读层 + 候选主张
   models/            provider 抽象、任务路由、visibility 拦截、脱敏、缓存、用量
   resume/            主张选择、诚实性闸门、HTML/PDF 渲染、对照表
   dedup/             公司归并、岗位身份键、投递冷却

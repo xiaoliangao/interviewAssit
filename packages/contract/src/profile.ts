@@ -96,10 +96,26 @@ export const REQUIRED_PROFILE_FIELDS = ['name.zh', 'phone', 'email'] as const;
 export const FieldClass = z.enum(['registry', 'narrative', 'decision']);
 export type FieldClass = z.infer<typeof FieldClass>;
 
-export const REPOS_ENTRY = z.object({
+export const RepoEntry = z.object({
   full_name: z.string().min(1),
   local_path: z.string().min(1),
+  /** 决定这个仓库的代码能不能发给云端模型。路由层按它强制拦截，不是标签。 */
   visibility: z.enum(['public', 'private', 'nda']),
+  /**
+   * 你在这个仓库里用过的 author 身份（邮箱或姓名）。
+   * 人在不同公司、不同时期用不同的 git 邮箱是常态，只填一个会让归因少算一半。
+   * 留空则回退到 profile.fields.email + git config user.email。
+   */
+  authors: z.array(z.string()).default([]),
+  /** 只看这个日期之后的提交。老仓库全量扫既慢又会把早年的练手代码算进来。 */
+  since: z.string().optional(),
+  /** 额外排除的目录（除内置的 node_modules / vendor / dist 等之外） */
+  exclude: z.array(z.string()).default([]),
 });
-export const ReposFile = z.object({ repos: z.array(REPOS_ENTRY).default([]) }).strict();
+export type RepoEntry = z.infer<typeof RepoEntry>;
+
+export const ReposFile = z.object({ repos: z.array(RepoEntry).default([]) }).strict();
 export type ReposFile = z.infer<typeof ReposFile>;
+
+/** 兼容旧名 */
+export const REPOS_ENTRY = RepoEntry;
