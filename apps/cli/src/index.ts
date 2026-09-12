@@ -20,6 +20,7 @@ import {
   loadFactsOrThrow,
   loadReposOnly,
   loadRubric,
+  loadRegistry,
   loadSources,
   openDb,
   pastedPosting,
@@ -27,6 +28,8 @@ import {
   persistExplanation,
   persistScan,
   proposeClaims,
+  registryStats,
+  registryToSourcesYaml,
   reparseJobs,
   rubricReview,
   runSource,
@@ -703,6 +706,61 @@ program
     } finally {
       db.close();
     }
+  });
+
+program
+  .command('registry')
+  .description('雇主注册表：哪家公司该走哪条采集通道')
+  .option('--status <s>', '只看这个状态（ok / needs_cdp / unverified / ...）')
+  .option('--emit-sources', '把能直接采的那些打印成 sources.yaml 片段', false)
+  .option('--keywords <list>', '生成片段时带上的关键词，逗号分隔', '')
+  .action((opts) => {
+    const all = loadRegistry();
+    if (all.length === 0) {
+      console.log(`${paths.registry} 下没有注册表文件。`);
+      return;
+    }
+
+    if (opts.emitSources) {
+      const kws = String(opts.keywords).split(',').map((x) => x.trim()).filter(Boolean);
+      const snippet = registryToSourcesYaml(all, { keywords: kws });
+      if (!snippet) {
+        console.log(C.yellow('注册表里还没有「能直接采」的条目。'));
+        console.log(C.dim('  unverified 的那些要先试通了才会出现在这里 —— 没试过就是没试过。'));
+        return;
+      }
+      console.log(C.dim('# 粘进 data/facts/sources.yaml 的 sources: 下面。'));
+      console.log(C.dim('# 刻意不直接写文件：采哪几家是你的订阅，不该由注册表替你决定。'));
+      console.log(snippet);
+      return;
+    }
+
+    const rows = opts.status ? all.filter((e) => e.status === opts.status) : all;
+    const mark: Record<string, string> = {
+      ok: C.green('ok'),
+      needs_browser_ua: C.yellow('需开 UA'),
+      needs_cdp: C.yellow('待通道B'),
+      unverified: C.dim('未验证'),
+      broken: C.red('已坏'),
+    };
+    for (const e of rows) {
+      const via = e.channel === 'api' ? `api:${e.adapter}` : e.ats ? `ats:${e.ats.kind}` : e.channel;
+      console.log(
+        `${e.id.padEnd(14)} ${(mark[e.status] ?? e.status).padEnd(18)} ${via.padEnd(14)} ` +
+          `${C.dim(e.verified_at ?? '—')}  ${e.name}`,
+      );
+      if (e.note) console.log(C.dim(`               ${e.note}`));
+    }
+
+    const st = registryStats(all);
+    console.log('');
+    console.log(
+      `共 ${st.total} 家：` +
+        Object.entries(st.byStatus).map(([k, v]) => `${k} ${v}`).join('　') +
+        `　${C.dim(`${st.stale} 家超过 90 天没验证`)}`,
+    );
+    console.log(C.dim('  「未验证」不是缺陷，是诚实 —— 没试过的路径就不该写成能走。'));
+    console.log(C.dim('  下一步：assit registry --emit-sources'));
   });
 
 program

@@ -545,13 +545,25 @@ GitHub 上还有一簇「求职表单自动填写」扩展（`OpenJobAutofill` 7
 | 公司 | 接口 | 结果 |
 |---|---|---|
 | 腾讯 | `careers.tencent.com/tencentcareer/api/post/Query` `GET` | ✅ 200，零凭据，返回结构化岗位 |
-| 字节跳动 | `jobs.bytedance.com/api/v1/search/job/posts` `POST` JSON | ✅ 200，零凭据，**JD 全文就在 `description` 里** |
+| 字节跳动 | `jobs.bytedance.com/api/v1/search/job/posts` `POST` JSON | ⚠️ 200，零凭据，**JD 全文就在 `description` 里**，但要浏览器 UA（见下） |
 | 百度 | `talent.baidu.com/httservice/getPostListNew` `POST` | ❌ `{"status":"no-auth","message":"illegal-visit"}` |
 | 网易 | `hr.163.com/api/hr163/position/queryPage` | ❌ 500，参数形态不对 |
 | 美团 / 京东 / 小米 | — | ❌ SSR 页 / 302 / 路径不对 |
 
 结论不是「国内大厂都能抓」。是**能抓的那两家应该立刻抓，抓不动的降级到通道 B —— 
 而不是去逆向它们的签名**。这条线在 [4.4](#44-三通道共用的安全闸门) 是硬的。
+
+**字节那个 ⚠️ 值得单独说，因为它和本项目的一条原则正面撞上了。**
+实测：同一个请求，浏览器 UA 返回 200，`assit-interview/0.1` 返回 **405**（与 Referer 无关）。
+而 `collectors/_shared/http.ts` 里写着「UA 如实声明自己是什么，伪装成浏览器是
+『模拟一个并不存在的用户』那一侧的行为」。
+
+处理方式不是二选一，是**把这个选择交出去**：`sources.yaml` 里加一个
+`browser_ua: true`，**默认 false**，不开就在采集时显式报错告诉你为什么。
+
+理由是这个选择应该留痕。它进你自己的配置文件、进 git、三个月后你还能看到
+当初做过这个决定 —— 而不是采集器在某个函数里悄悄替你决定了。
+`api` 通道的代码路径里没有「自动重试换 UA」这种东西。
 
 优点全在一处：**公开、无需登录、结构化、字段干净、没有封号风险、JD 是全文而不是截断**。
 
@@ -1884,6 +1896,18 @@ M1 里被「只做 4 个平台」挡下来的那些，加上大厂官网。**零
 - [ ] `vendor/employer-registry/*.yaml` 初版：**只收已验证的，其余照实标 `unverified`**
 - [ ] `assit sources doctor`：逐条打一次，回写 `verified_at` / `status`，接进岗位池那一页的健康度表
 - [ ] `assit registry sync`：拉取 → **显示 diff → 人工 apply**，上游固定 commit sha，绝不静默写入
+
+> **M1.5 的前半段已完成**（2026-09-12）：`api` / `cdp` 两类采集源进契约、
+> 腾讯与字节适配器实测可用、`vendor/employer-registry/cn.yaml` 收录 32 家
+> （homepage 均实测可达）、`assit registry` 与 `--emit-sources` 可用、
+> 通道 B 的 `SiteMatcher` 接口已定但未实现。剩下 `sources doctor` 与 `registry sync`。
+>
+> 真实数据又逮出两个 fixture 测不出来的分类洞：
+> ① 腾讯的 `ProductName` 被我拼进了 title，「手游小程序」里的**小程序**
+> 把一个服务器岗判成了 `frontend` —— 而 title 还参与 `identity_key` 去重，
+> 改成放进 JD 抬头；
+> ② 职能表里只有「后端」没有「**后台**」，腾讯系几乎都写「后台开发」，
+> 于是一整类岗位掉进 `swe` 兜底。
 
 **验收**：一条命令把腾讯 + 字节的岗位拉进池子并打上分；`doctor` 能把一个我手动改坏的
 条目标成红色；`registry sync` 在我不点确认时**什么都不写**。

@@ -30,10 +30,25 @@ export interface FetchOptions {
   /** 首次退避基数，实际等待是 base * 2^n + 抖动 */
   backoffBaseMs?: number;
   headers?: Record<string, string>;
+  method?: 'GET' | 'POST';
+  body?: string;
+  /**
+   * 覆盖 User-Agent。
+   *
+   * 默认值（见下面的 USER_AGENT）是如实声明。个别自建招聘站对非浏览器 UA
+   * 直接返回 405 —— 那种情况下要不要改 UA 是**用户的一次显式选择**，
+   * 由上层从配置里读出来传进来，采集器自己不做这个决定。
+   */
+  userAgent?: string;
   /** 注入用，测试时替换掉真实网络 */
   fetchImpl?: typeof fetch;
   signal?: AbortSignal;
 }
+
+/** 浏览器 UA。只在配置里显式开启时才会被用到，见 FetchOptions.userAgent。 */
+export const BROWSER_UA =
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 ' +
+  '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
 
 /**
  * 本工具是个人本地工具，UA 如实声明自己是什么。
@@ -82,7 +97,9 @@ export async function fetchText(url: string, opts: FetchOptions = {}): Promise<F
     const timer = setTimeout(() => ctrl.abort(), timeoutMs);
     try {
       const res = await doFetch(url, {
-        headers: { 'user-agent': USER_AGENT, accept: '*/*', ...opts.headers },
+        method: opts.method ?? 'GET',
+        body: opts.body,
+        headers: { 'user-agent': opts.userAgent ?? USER_AGENT, accept: '*/*', ...opts.headers },
         signal: opts.signal ?? ctrl.signal,
       });
       const body = await res.text();
@@ -115,7 +132,14 @@ export async function fetchText(url: string, opts: FetchOptions = {}): Promise<F
 }
 
 export async function fetchJson<T = unknown>(url: string, opts: FetchOptions = {}): Promise<T> {
-  const r = await fetchText(url, { ...opts, headers: { accept: 'application/json', ...opts.headers } });
+  const r = await fetchText(url, {
+    ...opts,
+    headers: {
+      accept: 'application/json',
+      ...(opts.body ? { 'content-type': 'application/json' } : {}),
+      ...opts.headers,
+    },
+  });
   try {
     return JSON.parse(r.body) as T;
   } catch {

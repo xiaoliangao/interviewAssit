@@ -37,6 +37,11 @@ function bootstrapEnv(): void {
   if (!process.env.ASSIT_DATA_DIR) {
     process.env.ASSIT_DATA_DIR = path.resolve(repoRoot, 'data');
   }
+  // 注册表进 git、随代码走，所以挂在仓库根而不是 data/ 下面。
+  // core 默认从 cwd 往上找，而 Electron 的 cwd 同样不可预期 —— 显式指过去。
+  if (!process.env.ASSIT_REGISTRY_DIR) {
+    process.env.ASSIT_REGISTRY_DIR = path.resolve(repoRoot, 'vendor/employer-registry');
+  }
 }
 bootstrapEnv();
 

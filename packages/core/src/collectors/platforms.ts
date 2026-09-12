@@ -1,5 +1,7 @@
 import { Posting, type JobSource } from '@assit/contract';
 import { fetchJson, fetchText, serialMap, type FetchOptions } from './_shared/http.js';
+import { collectCdp } from './cdp.js';
+import { PORTAL_ADAPTERS } from './cn-portals.js';
 import {
   htmlToText,
   ldMonthlySalary,
@@ -291,5 +293,15 @@ export function collect(source: JobSource, opts: CollectOptions = {}): Promise<C
       return collectAshby(source.board, opts);
     case 'jsonld':
       return collectJsonLd(source.urls, source.company, opts);
+    case 'api':
+      return PORTAL_ADAPTERS[source.adapter]({
+        ...opts,
+        keywords: source.keywords,
+        cities: source.cities,
+        pages: source.pages,
+        browserUa: source.browser_ua,
+      });
+    case 'cdp':
+      return collectCdp(source);
   }
 }

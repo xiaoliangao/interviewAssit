@@ -127,16 +127,39 @@ repos: []
   #   exclude: ["docs", "scripts/legacy"]
 `;
 
-const SOURCES = `# 公开招聘接口采集源。
+const SOURCES = `# 岗位采集源。三类，风险递增。
 #
-# 这条通道只收**无需登录**的公开接口：没有封号风险，JD 是全文而不是截断。
-# BOSS / 51job / 猎聘要登录，不在这里 —— 它们走浏览器扩展通道（M2），
-# 在那之前用 \`assit ingest\` 手动粘贴，下游处理完全一样。
+#   ATS（greenhouse / lever / ashby / jsonld）  公开无登录，零风险
+#   api                                        大厂自建招聘站的公开接口，零风险
+#   cdp                                        要登录的平台（BOSS / 51job / 猎聘 / 智联）
+#                                              接管你自己的浏览器被动旁听。**有平台风险，默认关**
+#
+# 别急着配 cdp：通道 B 还没实现，而 \`assit ingest\` 手动粘一份 JD
+# 走的是**完全一样**的下游处理。
+#
+# 哪家公司走哪条路：assit registry
+# 直接生成下面的片段：  assit registry --emit-sources --keywords "后端,Go"
 #
 # 配好后跑：assit collect  →  assit score
 # 看健康度：assit sources
 
 sources: []
+
+  # 大厂自建招聘站（见 assit registry）
+  # - id: tencent
+  #   platform: api
+  #   adapter: tencent
+  #   keywords: ["后端", "Go"]
+  #   pages: 3
+  #
+  # - id: bytedance
+  #   platform: api
+  #   adapter: bytedance
+  #   keywords: ["后端"]
+  #   # 字节的接口对非浏览器 UA 直接返回 405，不开这行就采不到。
+  #   # 默认不开是因为「UA 如实声明」是这个项目的一条原则 ——
+  #   # 改它应该是你的一次明确选择，写在这里、进 git、事后还能看到。
+  #   browser_ua: true
 
   # 外企与出海公司大量使用 Greenhouse / Lever / Ashby，接口干净且稳定
   # - id: greenhouse:acme

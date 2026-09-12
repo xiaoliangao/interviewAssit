@@ -36,12 +36,15 @@ const ROLE_FAMILIES: [RegExp, string][] = [
   [/(sre|site\s*reliability|运维|devops|基础架构|平台工程|\binfrastructure\b|platform\s*engineer|production\s*engineer)/i, 'sre'],
   [/(前端|frontend|front[- ]end|web开发|h5|小程序|客户端|android|ios|移动端|mobile\s*engineer|ui\s*engineer)/i, 'frontend'],
   [/(算法|machine\s*learning|\bml\b|深度学习|nlp|computer\s*vision|推荐|搜索算法|大模型|\bllm\b|applied\s*scientist|research\s*scientist|\bai\b.*(engineer|scientist))/i, 'algo'],
-  [/(数据开发|数仓|大数据|data\s*(engineer|scientist|analyst)|analytics\s*engineer|etl|\bbi\b)/i, 'data'],
+  [/(数据开发|数据工程|数仓|大数据|data\s*(engineer|scientist|analyst)|analytics\s*engineer|etl|\bbi\b)/i, 'data'],
   [/(测试|\bqa\b|quality\s*engineer|测开|\bsdet\b|test\s*engineer)/i, 'qa'],
   [/(安全|security\s*engineer|appsec|渗透|penetration)/i, 'security'],
   [/(架构师|architect)/i, 'architect'],
   [/(全栈|full[- ]?stack)/i, 'fullstack'],
-  [/(后端|服务端|backend|back[- ]end|server[- ]side|java|golang|\bgo\b|python|服务器开发)/i, 'backend'],
+  // 「后台」是国内（尤其腾讯系）对后端最常用的说法，和「后端」同义。
+  // 不加这个词，「后台开发工程师」会掉进最后的 swe 兜底 —— 真实数据里这是个大洞。
+  // 放在 frontend 之后是安全的：「后台管理系统前端开发」已经先被 frontend 接走了。
+  [/(后端|后台|服务端|backend|back[- ]end|server[- ]side|java|golang|\bgo\b|python|服务器开发)/i, 'backend'],
   // ── 非技术职能：排在领域判定**之后** ──
   // 放前面会把「Data Scientist, Finance」判成 other —— 那里的 Finance 是
   // 领域限定词而不是职能。放这里既能接住「Director, People Partners」

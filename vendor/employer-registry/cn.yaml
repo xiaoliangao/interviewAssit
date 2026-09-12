@@ -1,0 +1,100 @@
+# 国内雇主注册表 —— 初版收录（DESIGN §4.1.1）
+#
+# 一条原则：**宁可短而真，不要全而假。**
+# 下面每个 homepage 都在 2026-09-12 实际打过一次并返回 200；猜不准的 URL
+# 一律不写进来。一份「看起来很全、一跑一半 404」的表会让 `sources doctor`
+# 的告警变成噪音 —— 那才是真正的失败模式。
+#
+# status 的含义（见 contract/registry.ts）：
+#   ok                接口已实测打通，能直接采
+#   needs_browser_ua  接口通，但要在 sources.yaml 里显式开 browser_ua
+#   needs_cdp         公开接口要凭据/签名 → 走通道 B。**不逆向**
+#   unverified        官网可达，采集路径还没试 ← 初版绝大多数是这个
+#   broken            以前能采，现在不行了
+#
+# verified_at 由 `assit sources doctor` 回写，别手填。
+
+employers:
+  # ── 已实测打通 ──────────────────────────────────────────────────────────
+  - id: tencent
+    name: 腾讯
+    homepage: https://careers.tencent.com
+    channel: api
+    adapter: tencent
+    status: ok
+    verified_at: 2026-09-12
+    note: 公开 GET，零凭据，连 timestamp 都可不带。列表只给岗位职责，任职要求要再打一次详情
+
+  - id: bytedance
+    name: 字节跳动
+    homepage: https://jobs.bytedance.com
+    channel: api
+    adapter: bytedance
+    ats: { kind: feishu }
+    status: needs_browser_ua
+    verified_at: 2026-09-12
+    note: 列表直出 JD 全文（description + requirement）。非浏览器 UA 返回 405，实测与 Referer 无关
+
+  # ── 公开接口要凭据，降级通道 B ──────────────────────────────────────────
+  - id: baidu
+    name: 百度
+    homepage: https://talent.baidu.com/jobs/social
+    channel: cdp
+    status: needs_cdp
+    verified_at: 2026-09-12
+    note: httservice/getPostListNew 返回 {"status":"no-auth","message":"illegal-visit"}
+
+  - id: netease
+    name: 网易
+    homepage: https://hr.163.com
+    channel: cdp
+    status: needs_cdp
+    verified_at: 2026-09-12
+    note: api/hr163/position/queryPage 返回 500，参数形态未知
+
+  - id: meituan
+    name: 美团
+    homepage: https://zhaopin.meituan.com/web/home
+    channel: cdp
+    status: needs_cdp
+    verified_at: 2026-09-12
+    note: SSR 页面，列表接口未探明
+
+  - id: jd
+    name: 京东
+    homepage: https://zhaopin.jd.com/home
+    channel: cdp
+    status: needs_cdp
+    verified_at: 2026-09-12
+    note: web/job/getJobList 返回 302
+
+  # ── 官网可达，采集路径待验证 ────────────────────────────────────────────
+  # 这些是「收录」的主体。channel/adapter 留空是诚实的：还没试过就是还没试过。
+  - { id: alibaba,      name: 阿里巴巴,   homepage: https://talent.alibaba.com }
+  - { id: antgroup,     name: 蚂蚁集团,   homepage: https://talent.antgroup.com }
+  - { id: xiaomi,       name: 小米,       homepage: https://hr.xiaomi.com }
+  - { id: huawei,       name: 华为,       homepage: https://career.huawei.com/reccampportal/portal5/index.html }
+  - { id: pinduoduo,    name: 拼多多,     homepage: https://careers.pddglobalhr.com/campus/ }
+  - { id: kuaishou,     name: 快手,       homepage: https://zhaopin.kuaishou.cn }
+  - { id: didi,         name: 滴滴,       homepage: https://talent.didiglobal.com }
+  - { id: bilibili,     name: 哔哩哔哩,   homepage: https://jobs.bilibili.com }
+  - { id: xiaohongshu,  name: 小红书,     homepage: https://job.xiaohongshu.com }
+  - { id: dewu,         name: 得物,       homepage: https://campus.dewu.com, ats: { kind: feishu } }
+  - { id: tencentmusic, name: 腾讯音乐,   homepage: https://join.tencentmusic.com }
+  - { id: qihoo360,     name: "360",      homepage: https://hr.360.cn/hr/ }
+  - { id: wps,          name: 金山办公,   homepage: https://join.wps.cn }
+  - { id: job58,        name: 58同城,     homepage: https://zhaopin.58.com }
+  - { id: ke,           name: 贝壳找房,   homepage: https://campus.ke.com, ats: { kind: beisen } }
+  - { id: ctrip,        name: 携程,       homepage: https://job.ctrip.com, ats: { kind: moka } }
+  - { id: mihoyo,       name: 米哈游,     homepage: https://campus.mihoyo.com }
+  - { id: sensetime,    name: 商汤,       homepage: https://hr.sensetime.com }
+  - { id: moonshot,     name: 月之暗面,   homepage: https://www.moonshot.cn }
+  - { id: dji,          name: 大疆,       homepage: https://careers.dji.com/zh-CN/ }
+  - { id: oppo,         name: OPPO,       homepage: https://careers.oppo.com }
+  - { id: vivo,         name: vivo,       homepage: https://hr.vivo.com }
+  - { id: lenovo,       name: 联想,       homepage: https://talent.lenovo.com.cn }
+  - { id: shein,        name: SHEIN,      homepage: https://careers.shein.com }
+  # nio / xpeng 的招聘站跑在 *.jobs.feishu.cn 上 —— 域名本身就是证据，不用猜。
+  # 写一个 feishu 适配器能一次覆盖这一整类，优先级高于再写一个自建站适配器。
+  - { id: nio,    name: 蔚来,     homepage: https://nio.jobs.feishu.cn,      ats: { kind: feishu, token: nio } }
+  - { id: xpeng,  name: 小鹏汽车, homepage: https://xiaopeng.jobs.feishu.cn, ats: { kind: feishu, token: xiaopeng } }
