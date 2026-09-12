@@ -14,6 +14,7 @@
 |---|---|---|---|
 | Hisn00w/ASu-skills | MIT | `packages/contract/src/claim.ts`、`packages/core/src/facts/validate.ts` | 主张—证据账本的字段设计（`responsibility_level` / `verification_status` / `boundary` / `interview_details`）与校验器的检查项。代码为 TypeScript 重写，非复制 |
 | MadsLorentzen/ai-job-search | MIT | `packages/core/src/collectors/`（M1） | 「一个平台 = 一个 CLI + 稳定 JSON 契约 + 契约测试」的目录结构 |
+| eatmoreduck/boss-zhipin-scraper | MIT | `vendor/boss-city-codes/`、`packages/core/src/collectors/`（M2） | 城市码表（直接取用）；**被动捕获**的采集姿势与风控识别策略为参考设计，代码是 Python，不复用 |
 | shengjidaguai-china/BossHunter | **PolyForm Noncommercial 1.0** | `packages/core/src/models/`、`AccessGuard`（M2） | **仅参考设计，未复制任何代码。** `score_trace` 的 components/caps/hard_gaps 结构、风控预算的 reserve-before-navigate 语义、平台能力分级表 |
 
 ## 待办
