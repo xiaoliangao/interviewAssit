@@ -50,7 +50,7 @@ export async function runSource(
   };
 
   try {
-    const r = await collect(source, opts);
+    const r = await collect(source, { ...opts, db });
     base.fetched = r.fetched;
     base.rejected = r.rejected;
     for (const p of r.postings) {

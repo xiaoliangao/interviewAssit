@@ -8,12 +8,14 @@ import {
   DEFAULT_ROUTES,
   buildProvider,
   collect,
+  clearLock,
   currentProfileVersion,
   ensureDir,
   explainModule,
   findChrome,
   generateResume,
   funnel,
+  guardStatus,
   ignoreJob,
   ingestPosting,
   isGitRepo,
@@ -23,6 +25,7 @@ import {
   loadRubric,
   deleteRecordingAudio,
   listRecordings,
+  AgentBrowserCliBridge,
   applicationSnapshot,
   applyRegistrySync,
   doctorRegistry,
@@ -1069,6 +1072,59 @@ program
       console.log(C.dim('  ● = 有未确认的事件（邮件解析出来的要人点过才算数）'));
     } finally {
       db.close();
+    }
+  });
+
+program
+  .command('guard [action] [platform]')
+  .description('平台访问闸门：今天用了多少预算、有没有被风控锁住（action=unlock 解锁）')
+  .action((action: string | undefined, platform: string | undefined) => {
+    const db = openDb();
+    try {
+      if (action === 'unlock') {
+        if (!platform) throw new Error('要解锁哪个平台？如 `assit guard unlock boss`（全局是 `*`）');
+        clearLock(db, platform);
+        console.log(`${C.green('unlocked')} ${platform}`);
+        console.log(C.dim('  被风控过几次仍然记着 —— 那是要能查的。'));
+        return;
+      }
+      if (action) throw new Error(`不认识的动作 ${action}。可用：unlock`);
+
+      const platforms = (db
+        .prepare("SELECT DISTINCT platform FROM platform_access_events UNION SELECT platform FROM platform_safety_state")
+        .all() as { platform: string }[]).map((r) => r.platform);
+      if (platforms.length === 0) { console.log('还没有任何平台访问记录。'); return; }
+
+      for (const p of platforms) {
+        const st = guardStatus(db, p);
+        const head = p === '*' ? C.bold('（全局）') : C.bold(p);
+        const lock = st.locked
+          ? C.red(`已锁 · ${st.kind} · ${st.reason ?? ''}`)
+          : st.hits > 0 ? C.dim(`未锁（历史命中 ${st.hits} 次）`) : C.dim('未锁');
+        console.log(`${head}  今日 ${st.usedToday}/${st.dailyLimit}　${lock}`);
+        for (const s2 of st.byStage) {
+          console.log(C.dim(`    ${s2.stage.padEnd(8)} ${s2.used}${s2.limit !== null ? `/${s2.limit}` : ''}`));
+        }
+      }
+      console.log('');
+      console.log(C.dim('  锁是按平台的：BOSS 被限流说明不了 51job 的任何事。'));
+      console.log(C.dim('  解锁要人来做，不会自动恢复 —— 平台刚告诉过你它注意到你了。'));
+    } finally {
+      db.close();
+    }
+  });
+
+program
+  .command('bridge')
+  .description('检查浏览器桥（通道 B 用它接管你自己已登录的 Chrome）')
+  .action(async () => {
+    const b = new AgentBrowserCliBridge();
+    const h = await b.health();
+    console.log(`${h.ok ? C.green(' ✓') : C.yellow(' ✗')}  ${b.name}  ${C.dim(h.detail)}`);
+    if (!h.ok) {
+      console.log('');
+      console.log(C.dim('  桥装不上也不影响主流程：BOSS / 51job 用 `assit ingest` 手动粘贴，'));
+      console.log(C.dim('  去重、解析、打分、投递记录，下游处理完全一样。'));
     }
   });
 

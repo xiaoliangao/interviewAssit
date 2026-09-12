@@ -1,6 +1,5 @@
 import { Posting, type JobSource } from '@assit/contract';
 import { fetchJson, fetchText, serialMap, type FetchOptions } from './_shared/http.js';
-import { collectCdp } from './cdp.js';
 import { PORTAL_ADAPTERS } from './cn-portals.js';
 import {
   htmlToText,
@@ -28,6 +27,13 @@ export interface CollectResult {
 }
 
 export interface CollectOptions extends FetchOptions {
+  /**
+   * 通道 B 要用的数据库句柄。
+   *
+   * 只有 cdp 分支需要它 —— `AccessGuard` 的预算和风险锁必须跨进程持久化，
+   * 内存里的闸门重启一次就形同虚设。其余通道是无状态的公开接口，不需要。
+   */
+  db?: unknown;
   /** 单次最多取多少条，防止一个大板子把岗位池冲掉 */
   limit?: number;
   intervalMs?: number;
@@ -301,7 +307,17 @@ export function collect(source: JobSource, opts: CollectOptions = {}): Promise<C
         pages: source.pages,
         browserUa: source.browser_ua,
       });
-    case 'cdp':
-      return collectCdp(source);
+    case 'cdp': {
+      if (!opts.db) {
+        throw new Error(
+          '通道 B 需要数据库句柄（AccessGuard 的预算和风险锁要持久化）。\n' +
+            '  用 runSource() 而不是直接调 collect()。',
+        );
+      }
+      // 动态 import 打断循环依赖：cdp-run 要 platforms 的 CollectResult 类型
+      return import('./cdp-run.js').then((m) =>
+        m.collectViaCdp(opts.db as never, source, { limit: opts.limit }),
+      );
+    }
   }
 }

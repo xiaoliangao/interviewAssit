@@ -1,5 +1,5 @@
 import type { JobSource, Posting } from '@assit/contract';
-import type { CollectResult } from './platforms.js';
+import type { CapturedResponse } from './bridge/types.js';
 
 /**
  * 通道 B · CDP 被动捕获（DESIGN §4.2 / §4.3）—— **接口先定下来，实现在 M2。**
@@ -24,12 +24,9 @@ import type { CollectResult } from './platforms.js';
 
 export type CdpSite = Extract<JobSource, { platform: 'cdp' }>['site'];
 
-export interface CapturedResponse {
-  url: string;
-  status: number;
-  /** 页面自己拿到的响应体。工具只读，不重放、不改写 */
-  bodyText: string;
-}
+// CapturedResponse 定义在 bridge/types.ts —— 它描述的是「桥交回来的东西」，
+// 属于桥那一侧的契约。这里只是转出去给 matcher 用。
+export type { CapturedResponse };
 
 export interface RiskVerdict {
   blocked: boolean;
@@ -72,29 +69,13 @@ export interface SiteMatcher {
   risk(res: CapturedResponse): RiskVerdict;
 }
 
-/**
- * 已实现的 matcher。**M2 往这里填。**
- * 顺序建议：BOSS（最大的量）→ 51job（复用度最高，验证内核确实平台无关）→ 猎聘 / 智联。
- */
-export const SITE_MATCHERS: Partial<Record<CdpSite, SiteMatcher>> = {};
-
 export class CdpNotImplemented extends Error {
   constructor(site: CdpSite) {
     super(
-      `通道 B（CDP 被动捕获）还没实现 —— ${site} 暂时采不了。\n\n` +
+      `${site} 还没有 matcher。\n\n` +
         '现在就能用的替代：`assit ingest --from-clipboard`，复制 JD 粘进来，\n' +
-        '去重、三态解析、打分、投递记录，下游处理和自动采集**完全一样**。\n' +
-        '手动复制一次的成本，低于一个会被反爬打断的采集器。',
+        '去重、三态解析、打分、投递记录，下游处理和自动采集**完全一样**。',
     );
     this.name = 'CdpNotImplemented';
   }
-}
-
-export function collectCdp(source: Extract<JobSource, { platform: 'cdp' }>): Promise<CollectResult> {
-  const m = SITE_MATCHERS[source.site];
-  if (!m) return Promise.reject(new CdpNotImplemented(source.site));
-  // 内核在这里接上：connect(debug_port) → navigate(m.searchUrl(...)) → scroll
-  //   → on(Network.responseReceived, r => m.matches(r.url) && collect(m.parse(r)))
-  //   → 每个响应先过 m.risk()，blocked 就立刻停并上锁
-  return Promise.reject(new CdpNotImplemented(source.site));
 }
