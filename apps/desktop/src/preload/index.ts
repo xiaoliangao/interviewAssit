@@ -46,6 +46,13 @@ const api = {
   applyRecord: (input: { postingId: string; channel: string; resumePath: string; greeting?: string; overrideCooldown?: boolean }) =>
     invoke<{ id: string; snapshots: { kind: string; sha256: string }[] }>('apply:record', input),
 
+  // 题库与复习
+  drillDue: (limit?: number) => invoke<DueQuestion[]>('drill:due', limit),
+  drillBoard: () => invoke<DrillBoard>('drill:board'),
+  drillGrade: (id: string, grade: number) =>
+    invoke<{ dueInDays: number; nextReviewAt: string }>('drill:grade', id, grade),
+  drillClaims: () => invoke<ClaimDrillStat[]>('drill:claims'),
+
   openExternal: (url: string) => invoke<boolean>('shell:open', url),
   reveal: (p: string) => invoke<boolean>('shell:reveal', p),
 };
@@ -251,6 +258,41 @@ export interface AppSnapshot {
   jd: string | null;
   greeting: string | null;
   forms: { domain: string; url: string | null; data: unknown }[];
+}
+
+export interface DueQuestion {
+  id: string;
+  content: string;
+  topic: string | null;
+  sourceType: string;
+  sourceRef: string;
+  credibility: 'verified' | 'secondhand' | 'unverified';
+  claimId: string | null;
+  answerStandard: string | null;
+  answerMine: string | null;
+  origin: string | null;
+  repetitions: number;
+  nextReviewAt: string;
+}
+
+export interface DrillBoard {
+  total: number;
+  dueNow: number;
+  byTopic: { topic: string; total: number; due: number }[];
+  byCredibility: Record<string, number>;
+  weakest: { id: string; content: string; origin: string | null; lastGrade: number | null }[];
+  todayGraded: number;
+}
+
+export interface ClaimDrillStat {
+  claimId: string;
+  fact: string;
+  level: string;
+  status: string;
+  asked: number;
+  solid: number;
+  failed: number;
+  lastAsked: string | null;
 }
 
 export interface TodaySummary {

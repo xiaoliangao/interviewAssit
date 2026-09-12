@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { AppContext } from '../preload/index.js';
 import { Apply } from './panels/Apply.js';
+import { Drill } from './panels/Drill.js';
 import { Interview } from './panels/Interview.js';
 import { JobPool } from './panels/JobPool.js';
 import { Today } from './panels/Today.js';
 
-type PanelId = 'today' | 'jobs' | 'apply' | 'interview';
+type PanelId = 'today' | 'jobs' | 'apply' | 'interview' | 'drill';
 
 /**
  * 六个面板是最终形态，但按阶段落地（见 docs/DESIGN.md §14）。
@@ -14,7 +15,6 @@ type PanelId = 'today' | 'jobs' | 'apply' | 'interview';
  */
 const PLANNED = [
   { id: 'facts', label: '事实库 & 简历', stage: '按需（现在用 CLI）' },
-  { id: 'drill', label: '题库 & 复习', stage: 'M5' },
 ];
 
 export function App(): JSX.Element {
@@ -72,6 +72,12 @@ export function App(): JSX.Element {
               一个你忘了它在录的录音器是个事故 —— DESIGN §13.3。
             */}
             {recording && <span className="rec-dot" title="正在录制" />}
+          </button>
+          <button
+            className={`nav-item ${panel === 'drill' ? 'active' : ''}`}
+            onClick={() => setPanel('drill')}
+          >
+            <span>题库 & 复习</span>
           </button>
 
           <div className="nav-section">尚未落地</div>
@@ -142,6 +148,7 @@ export function App(): JSX.Element {
         */}
         {panel === 'apply' && <Apply key={`a${reloadKey}`} />}
         {panel === 'interview' && <Interview onRecordingChange={setRecording} />}
+        {panel === 'drill' && <Drill key={`d${reloadKey}`} />}
       </main>
     </div>
   );

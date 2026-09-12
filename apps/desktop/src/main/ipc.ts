@@ -2,9 +2,13 @@ import { ipcMain, shell } from 'electron';
 import {
   appendChunk,
   applicationSnapshot,
+  claimDrillStats,
   currentProfileVersion,
+  drillBoard,
+  dueToday,
   facets,
   funnel,
+  gradeQuestion,
   ignoreJob,
   jobDetail,
   loadRubric,
@@ -226,6 +230,14 @@ export function registerIpc(): void {
       confirmedByUser: true,
     });
   });
+
+  // ── 题库与复习（DESIGN §9）────────────────────────────────────────────
+  handle('drill:due', (limit?: number) => dueToday(getDb(), limit ?? 20));
+  handle('drill:board', () => drillBoard(getDb()));
+  handle('drill:grade', (id: string, grade: number) =>
+    gradeQuestion(getDb(), id, grade as 0 | 1 | 2 | 3 | 4 | 5),
+  );
+  handle('drill:claims', () => claimDrillStats(getDb()));
 
   handle('shell:open', async (url: string) => {
     if (!/^https?:\/\//i.test(url)) throw new Error('只允许打开 http(s) 链接');
