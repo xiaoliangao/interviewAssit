@@ -8,8 +8,12 @@ import {
   DEFAULT_ROUTES,
   buildProvider,
   collect,
+  addTurn,
+  claimDrillStats,
   clearLock,
   currentProfileVersion,
+  detectEngine,
+  endSession,
   ensureDir,
   explainModule,
   findChrome,
@@ -24,6 +28,8 @@ import {
   loadReposOnly,
   loadRubric,
   deleteRecordingAudio,
+  gatherProbeContext,
+  generateProbes,
   listRecordings,
   AgentBrowserCliBridge,
   applicationSnapshot,
@@ -43,6 +49,7 @@ import {
   proposeClaims,
   registryStats,
   registryToSourcesYaml,
+  recordAnswer,
   recordApplication,
   recoverStale,
   planRegistrySync,
@@ -50,10 +57,13 @@ import {
   rubricReview,
   runSource,
   scanRepo,
+  sessionSummary,
+  startSession,
   scoreAllJobs,
   sourceHealth,
   writeBackRegistry,
   syncFacts,
+  transcribeRecording,
   validateFacts,
   validateRubricFile,
   type Finding,
@@ -1125,6 +1135,125 @@ program
       console.log('');
       console.log(C.dim('  桥装不上也不影响主流程：BOSS / 51job 用 `assit ingest` 手动粘贴，'));
       console.log(C.dim('  去重、解析、打分、投递记录，下游处理完全一样。'));
+    }
+  });
+
+program
+  .command('transcribe <recordingId>')
+  .description('本地转写一份面试录音。**音频不出本机，没有云端兜底**')
+  .option('--lang <l>', '语言', 'zh')
+  .action(async (id, opts) => {
+    const e = detectEngine();
+    if (!e) {
+      console.log(C.yellow('没有本地转写引擎。'));
+      console.log(C.dim('  brew install whisper-cpp    然后下个模型放到 ~/.cache/whisper/'));
+      console.log(C.dim('  pipx install faster-whisper'));
+      console.log(C.dim('  不会有云端兜底 —— 面试录音里有对方的声音，那是别人的个人信息。'));
+      return;
+    }
+    console.log(C.dim(`引擎 ${e.engine} · ${e.bin}`));
+    const db = openDb();
+    try {
+      const r = await transcribeRecording(db, id, { language: opts.lang });
+      console.log(`${C.green('ok')} ${r.chars} 字 · ${r.segments} 段 · ${r.sha256.slice(0, 12)}`);
+      console.log(C.dim('  音频 30 天后自动删，转写留着 —— 结构化文本不含声纹，却是复盘唯一需要的东西。'));
+    } finally {
+      db.close();
+    }
+  });
+
+program
+  .command('probe <claimId>')
+  .description('项目深挖：按 claim 的真实 commit 出追问题（private/nda 只走本地模型）')
+  .option('--repo <path>', '仓库本地路径')
+  .option('--count <n>', '出几个问题', '4')
+  .option('--session <label>', '把这些问题记进一个会话，之后可以逐个作答')
+  .action(async (claimId, opts) => {
+    const facts = loadFactsOrThrow();
+    const claim = facts.claims.find((c) => c.id === claimId);
+    if (!claim) throw new Error(`事实库里没有主张 ${claimId}`);
+    const repo = opts.repo
+      ?? loadReposOnly().repos.find((r) => r.full_name === claim.code_evidence?.repo)?.local_path;
+    if (!repo) throw new Error('不知道仓库在哪。给 --repo，或者在 repos.yaml 里配上 local_path');
+
+    const ctx = gatherProbeContext(claim, repo);
+    console.log(C.dim(`${ctx.diffs.length} 个 commit · visibility=${ctx.visibility}`));
+    const db = openDb();
+    try {
+      const qs = await generateProbes(ctx, { db, count: Number(opts.count) });
+      if (qs.length === 0) {
+        console.log(C.yellow('模型没出题（或者出的题都没有依据，被丢掉了）。'));
+        return;
+      }
+      let sessionId: string | null = null;
+      if (opts.session) {
+        sessionId = startSession(db, { kind: 'mock', label: opts.session });
+      }
+      qs.forEach((q, i) => {
+        console.log('');
+        console.log(C.bold(`${i + 1}. ${q.question}`));
+        console.log(C.dim(`   依据：${q.basis}`));
+        if (sessionId) {
+          const t = addTurn(db, { sessionId, question: q.question, claimId, questionBasis: q.basis });
+          console.log(C.dim(`   ${t}`));
+        }
+      });
+      if (sessionId) {
+        console.log('');
+        console.log(C.dim(`  作答：assit answer <turnId> --verdict solid|shaky|failed|skipped`));
+      }
+    } finally {
+      db.close();
+    }
+  });
+
+program
+  .command('answer <turnId>')
+  .description('记录一次作答与自评。**自评由你填，不是模型判的**')
+  .requiredOption('--verdict <v>', 'solid | shaky | failed | skipped')
+  .option('--text <t>', '你的回答')
+  .action((turnId, opts) => {
+    const ok = ['solid', 'shaky', 'failed', 'skipped'];
+    if (!ok.includes(opts.verdict)) throw new Error(`verdict 只能是 ${ok.join(' / ')}`);
+    const db = openDb();
+    try {
+      const fx = recordAnswer(db, { turnId, answer: opts.text ?? '', verdict: opts.verdict });
+      if (fx.length === 0) {
+        console.log(C.green('已记录。') + C.dim(' 账本没有变化。'));
+        return;
+      }
+      console.log(C.yellow('账本发生了变化 —— 这是这个系统唯一的闭环：'));
+      for (const f of fx) {
+        console.log(`  ${f.claimId}　${f.field}：${f.from} → ${C.bold(f.to)}`);
+        console.log(C.dim(`    ${f.reason}`));
+      }
+      console.log(C.dim('  下一份简历不会再那样写了。要撤销就编辑 claims/ 里的文件再 assit sync。'));
+    } finally {
+      db.close();
+    }
+  });
+
+program
+  .command('drill-stats')
+  .description('每条主张被追问的历史 —— 简历上哪几条你其实讲不清楚')
+  .action(() => {
+    const db = openDb();
+    try {
+      const rows = claimDrillStats(db);
+      if (rows.length === 0) { console.log('事实库里还没有主张（或者还没 assit sync）。'); return; }
+      console.log(C.bold('问过  答住  答砸  状态      等级              主张'));
+      for (const r of rows) {
+        const fail = r.failed > 0 ? C.red(String(r.failed).padStart(4)) : C.dim('   0');
+        console.log(
+          `${String(r.asked).padStart(4)} ${String(r.solid).padStart(5)} ${fail}  ` +
+            `${r.status.padEnd(8)} ${r.level.padEnd(16)} ${r.fact.slice(0, 40)}`,
+        );
+      }
+      console.log('');
+      console.log(C.dim('  答砸最多的排最前 —— 那正是下一场最该准备的。'));
+      console.log(C.dim('  「问过 0 次」的也值得注意：没被追问过的主张，可信度没有被验证过。'));
+    } finally {
+      db.close();
     }
   });
 

@@ -8,8 +8,11 @@ import {
   listRecordings,
   openDb,
   pruneRecordings,
+  parseWhisperOutput,
   recoverStale,
   resetLiveForTest,
+  transcribeFile,
+  transcribeRecording,
   setRecordingKeep,
   startRecording,
   stopRecording,
@@ -248,5 +251,85 @@ describe('录音会话', () => {
     const r = recoverStale(db);
     expect(r.failed).toEqual([h.id]);
     expect(listRecordings(db)[0]!.status).toBe('failed');
+  });
+});
+
+// ── 本地转写 ──────────────────────────────────────────────────────────────
+
+describe('转写：音频不出本机，没有例外', () => {
+  let d2: string;
+  let db2: Db;
+  beforeEach(() => {
+    d2 = fs.mkdtempSync(path.join(os.tmpdir(), 'assit-tr-'));
+    process.env.ASSIT_DATA_DIR = d2;
+    db2 = openDb();
+  });
+  afterEach(() => {
+    db2.close();
+    delete process.env.ASSIT_DATA_DIR;
+    fs.rmSync(d2, { recursive: true, force: true });
+  });
+
+  const engine = { engine: 'whisper-cpp' as const, bin: '/fake/whisper', model: '/fake/m.bin' };
+  const WHISPER_OUT = `
+[00:00:00.000 --> 00:00:03.500]   请你介绍一下这个项目
+[00:00:03.500 --> 00:00:09.120]   这个项目是做库存扣减的
+[00:00:09.120 --> 00:00:09.500]
+`;
+
+  it('解析带时间戳的逐行输出', () => {
+    const segs = parseWhisperOutput(WHISPER_OUT);
+    expect(segs).toHaveLength(2); // 空文本那行被丢掉
+    expect(segs[0]).toEqual({ startSec: 0, endSec: 3.5, text: '请你介绍一下这个项目' });
+    expect(segs[1]!.startSec).toBeCloseTo(3.5, 3);
+  });
+
+  it('找不到本地引擎时明说怎么装，并写明不会有云端兜底', async () => {
+    await expect(transcribeFile('/tmp/x.wav', { engine: undefined, runner: async () => ({ stdout: '', stderr: '' }) }))
+      .rejects.toThrow(/不会有云端兜底|本地转写引擎/);
+  });
+
+  it('转写结果存成 artifact，并挂回录音行', async () => {
+    const h = startRecording(db2, { label: '一面', consentConfirmedAt: new Date().toISOString() });
+    appendChunk(h.id, pcm(32_000));
+    stopRecording(db2, h.id);
+
+    const r = await transcribeRecording(db2, h.id, {
+      engine,
+      runner: async () => ({ stdout: WHISPER_OUT, stderr: '' }),
+    });
+    expect(r.segments).toBe(2);
+    expect(r.chars).toBeGreaterThan(0);
+
+    const row = db2.prepare('SELECT transcript_sha256 FROM interview_recordings WHERE id=?').get(h.id) as any;
+    expect(row.transcript_sha256).toBe(r.sha256);
+  });
+
+  it('音频已被过期清理掉时报清楚，而不是转出一段空白', async () => {
+    const h = startRecording(db2, { label: '一面', consentConfirmedAt: new Date().toISOString() });
+    appendChunk(h.id, pcm(32_000));
+    stopRecording(db2, h.id);
+    deleteRecordingAudio(db2, h.id);
+
+    await expect(transcribeRecording(db2, h.id, { engine })).rejects.toThrow(/已不在/);
+  });
+
+  it('引擎产出空内容要显式失败', async () => {
+    await expect(
+      transcribeFile(path.join(d2, 'a.wav'), { engine, runner: async () => ({ stdout: '  ', stderr: '' }) }),
+    ).rejects.toThrow(/音频文件不存在/);
+    fs.writeFileSync(path.join(d2, 'a.wav'), 'x');
+    await expect(
+      transcribeFile(path.join(d2, 'a.wav'), { engine, runner: async () => ({ stdout: '  ', stderr: '' }) }),
+    ).rejects.toThrow(/产出为空/);
+  });
+
+  it('认不出时间戳就退回整段文本，但如实报告「没有分段」', async () => {
+    fs.writeFileSync(path.join(d2, 'b.wav'), 'x');
+    const t = await transcribeFile(path.join(d2, 'b.wav'), {
+      engine, runner: async () => ({ stdout: '一整段没有时间戳的文字', stderr: '' }),
+    });
+    expect(t.text).toBe('一整段没有时间戳的文字');
+    expect(t.segments).toHaveLength(0);
   });
 });
