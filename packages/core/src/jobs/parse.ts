@@ -16,10 +16,28 @@ function t<T>(value: T | null, confidence: Confidence, source: string | null = n
 
 const UNKNOWN = <T>(): Tristate<T> => ({ value: null, confidence: 'unknown', source: null });
 
-/** 截取命中关键词周围的一小段原文作为 source —— 打分要能指回 JD 原文。 */
-function excerpt(text: string, index: number, len = 24): string {
-  const start = Math.max(0, index - 8);
-  return text.slice(start, start + len).replace(/\s+/g, ' ').trim();
+const BREAK = /[\n。；;.!?·、,，:：]/;
+
+/**
+ * 截取命中关键词周围的一小段原文作为 source —— 打分要能指回 JD 原文。
+ *
+ * 两边都往最近的断句处对齐。从词中间切开的引文（「ning on AWS · Help desi」）
+ * 看着像 bug，而这是打分详情页上最多人读的一行字。
+ */
+function excerpt(text: string, index: number, len = 34): string {
+  const half = Math.floor(len / 2);
+  let start = Math.max(0, index - half);
+  let end = Math.min(text.length, index + half);
+
+  const leftWindow = text.slice(Math.max(0, start - 14), start);
+  const leftBreak = leftWindow.split('').reverse().findIndex((c) => BREAK.test(c) || c === ' ');
+  if (leftBreak >= 0) start -= leftBreak;
+
+  const rightWindow = text.slice(end, Math.min(text.length, end + 14));
+  const rightBreak = rightWindow.split('').findIndex((c) => BREAK.test(c) || c === ' ');
+  if (rightBreak >= 0) end += rightBreak;
+
+  return text.slice(start, end).replace(/\s+/g, ' ').trim();
 }
 
 // ── 薪资 ───────────────────────────────────────────────────────────────────

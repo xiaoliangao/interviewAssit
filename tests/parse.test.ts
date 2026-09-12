@@ -277,3 +277,23 @@ describe('整体解析与 coverage', () => {
     expect(Object.values(r.attrs).every((a) => a.confidence === 'unknown')).toBe(true);
   });
 });
+
+describe('JD 引文：打分页上最多人读的一行字', () => {
+  it('两边对齐到断句处，不从词中间切开', () => {
+    const jd = '· Build and operate services running on AWS · Help design the platform';
+    const s = parseTechStack(jd);
+    const q = s.source!;
+    // 必须仍然是 JD 的子串（归一化空白后）—— 证据校验靠的就是这个
+    expect(jd.replace(/\s+/g, ' ')).toContain(q);
+    // 不该以半个单词开头或结尾
+    expect(q).not.toMatch(/^[a-z]{1,3}\s/i);
+    expect(q.split(' ')[0]).not.toBe('ning');
+  });
+
+  it('中文 JD 对齐到标点', () => {
+    const jd = '任职要求：本科及以上学历，5 年以上后端开发经验；精通 Go，熟悉 Redis。';
+    const e = parseEducation(jd);
+    expect(jd.replace(/\s+/g, ' ')).toContain(e.source!);
+    expect(e.source).toContain('本科');
+  });
+});

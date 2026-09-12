@@ -8,7 +8,7 @@ import {
   DEFAULT_ROUTES,
   buildProvider,
   collect,
-  contentVersion,
+  currentProfileVersion,
   ensureDir,
   explainModule,
   findChrome,
@@ -27,6 +27,7 @@ import {
   persistExplanation,
   persistScan,
   proposeClaims,
+  reparseJobs,
   rubricReview,
   runSource,
   scanRepo,
@@ -386,14 +387,6 @@ program
     }
   });
 
-function currentProfileVersion(): string {
-  // 简历版本决定「这份 JD 对我合不合适」，所以它必须进 score 的唯一键。
-  // 还没生成过简历时用事实库快照当版本 —— 至少能区分「我改过事实库之后」。
-  const facts = validateFacts();
-  const ids = (facts.facts?.claims ?? []).map((c) => c.id).sort().join(',');
-  return `facts-${contentVersion(ids)}`;
-}
-
 program
   .command('ingest')
   .description('粘贴入库：零风险、覆盖一切平台（包括 BOSS），扩展做出来之前就能用')
@@ -452,6 +445,24 @@ program
       r.notes.forEach((n) => console.log(C.yellow(`  ⚠ ${n}`)));
       console.log('');
       console.log(C.dim('  下一步：assit score'));
+    } finally {
+      db.close();
+    }
+  });
+
+program
+  .command('reparse')
+  .description('用当前解析器重算已入库岗位的三态字段（改了解析器之后跑）')
+  .option('--job <id>', '只重算一个')
+  .action((opts) => {
+    let extraTech: string[] = [];
+    try { extraTech = loadRubric().rubric.profile.stack; } catch { /* 可选 */ }
+    const db = openDb();
+    try {
+      const r = reparseJobs(db, { extraTech, jobId: opts.job });
+      console.log(`扫描 ${r.scanned} 个 · ${C.green(`更新 ${r.changed}`)}` +
+        (r.noJd > 0 ? C.yellow(` · ${r.noJd} 个没有 JD 存档，已跳过`) : ''));
+      if (r.changed > 0) console.log(C.dim('  三态字段变了，分数需要重算：assit score --force'));
     } finally {
       db.close();
     }

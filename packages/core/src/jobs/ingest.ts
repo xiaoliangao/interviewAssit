@@ -1,5 +1,5 @@
 import type { Posting } from '@assit/contract';
-import { putArtifact } from '../artifacts.js';
+import { putArtifact, readArtifact } from '../artifacts.js';
 import type { Db } from '../db/index.js';
 import { identityKey, normalizeTitle, resolveCompany, salaryConflict } from '../dedup/index.js';
 import { newId, sha256 } from '../util/hash.js';
@@ -340,4 +340,67 @@ export function platformFromUrl(url: string): string {
   } catch {
     return 'paste';
   }
+}
+
+/**
+ * 用当前解析器重新推导已入库岗位的三态字段。
+ *
+ * attrs 是入库那一刻解析出来的，改了解析器不会自动回灌 ——
+ * 于是修完一个解析 bug，库里的旧岗位还带着错的技术栈、错的引文。
+ * 这个函数之于解析器，等同于 `score --force` 之于 rubric。
+ *
+ * 能这么做的前提是 JD 全文被存档了：attrs 是派生数据，随时可以重算。
+ */
+export function reparseJobs(
+  db: Db,
+  opts: { extraTech?: string[]; jobId?: string } = {},
+): { scanned: number; changed: number; noJd: number } {
+  const rows = db
+    .prepare(
+      `SELECT j.id, j.attrs, j.salary_raw, c.canonical_name AS company,
+              (SELECT p.jd_sha256 FROM postings p WHERE p.job_id = j.id
+               ORDER BY p.collected_at DESC LIMIT 1) AS jdSha
+       FROM jobs j JOIN companies c ON c.id = j.company_id
+       ${opts.jobId ? 'WHERE j.id = ?' : ''}`,
+    )
+    .all(...(opts.jobId ? [opts.jobId] : [])) as any[];
+
+  let changed = 0;
+  let noJd = 0;
+  const upd = db.prepare('UPDATE jobs SET attrs = ? WHERE id = ?');
+
+  db.transaction(() => {
+    for (const r of rows) {
+      if (!r.jdSha) {
+        noJd += 1;
+        continue;
+      }
+      let jdText: string;
+      try {
+        jdText = readArtifact(r.jdSha, 'jd.md').toString('utf8');
+      } catch {
+        noJd += 1; // 存档丢了就跳过，保留旧值总比清空强
+        continue;
+      }
+      const parsed = parseJob({
+        jdText,
+        companyName: r.company,
+        salaryRaw: r.salary_raw,
+        extraTech: opts.extraTech,
+      });
+      const old = JSON.parse(r.attrs || '{}');
+      const next: StoredAttrs = {
+        ...parsed.attrs,
+        salary_months_confidence: old.salary_months_confidence ?? parsed.salary.monthsConfidence,
+        ...(old.salary_conflict ? { salary_conflict: true } : {}),
+      };
+      const nextJson = JSON.stringify(next);
+      if (nextJson !== r.attrs) {
+        upd.run(nextJson, r.id);
+        changed += 1;
+      }
+    }
+  })();
+
+  return { scanned: rows.length, changed, noJd };
 }

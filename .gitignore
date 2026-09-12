@@ -9,3 +9,8 @@ data/
 # 凭据永不入库
 .env
 .env.*
+
+# Electron ABI 的原生模块：平台相关、绑 Electron 版本。
+# 用 pnpm desktop:native 重新拉，别提交。
+apps/desktop/native/
+apps/desktop/out/

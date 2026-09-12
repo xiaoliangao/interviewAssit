@@ -6,7 +6,7 @@
 
 设计见 [`docs/DESIGN.md`](docs/DESIGN.md)，评审与修订计划见 [`docs/plan.md`](docs/plan.md)。
 
-当前进度：**M0a + M0b + M1 已完成**（事实库 → 定制简历；项目解析 → 候选主张；岗位采集 → 可解释打分）。
+当前进度：**M0a + M0b + M1 已完成**（事实库 → 定制简历；项目解析 → 候选主张；岗位采集 → 可解释打分 → 桌面壳）。
 
 ## 快速开始
 
@@ -56,6 +56,7 @@ pnpm assit resume --jd jd.md --target backend
 | `assit why <jobId>` | 展开一个岗位的完整打分证据 |
 | `assit ignore <jobId> --reason` | 忽略并记原因（会被 rubric-review 消费） |
 | `assit rubric-review` | 每周复盘：高分被忽略 / 低分被投递的岗位 |
+| `assit reparse` | 改了解析器之后回灌三态字段（之于解析器 = `score --force` 之于 rubric） |
 | `assit providers` | 探测可用模型，显示各自能处理的最高敏感级 |
 | `assit doctor` | 环境自检 |
 
@@ -116,6 +117,31 @@ assit why <jobId>      # 这个分数凭什么
   schedule        —    未披露，不计入分母
 ```
 
+## 桌面端
+
+```bash
+pnpm desktop:native   # 首次：拉一份 Electron ABI 的 better-sqlite3
+pnpm desktop          # 开发模式
+pnpm desktop:build    # 构建
+```
+
+M1 落地两个面板：**今日**（只列需要你动手的事）和**岗位池**（表格 + 逐项证据抽屉 + 采集源健康度）。
+其余四个面板在侧栏里灰着并标了阶段 —— 没做就是没做，假装存在然后点进去是空页没有意义。
+
+> **原生模块要两份。** better-sqlite3 的 `.node` 按 ABI 编译，Node 和 Electron 的
+> `NODE_MODULE_VERSION` 不同（127 vs 130）。就地重编译会让 CLI 和测试当场全挂。
+> 所以仓库里保留 Node 那份，Electron 那份由 `pnpm desktop:native` 拉到
+> `apps/desktop/native/`（不进 git，平台相关），主进程通过环境变量指过去。
+
+烟测不开窗口，直接把主进程真正会走的那条链路跑一遍：
+
+```bash
+node scripts/… # 或
+ASSIT_SMOKE_OUT=/tmp/s.txt electron apps/desktop/out/main/index.js --smoke
+```
+
+单测和 CLI 全绿说明不了桌面壳能跑 —— 原生模块的 ABI 只有在 Electron 里真开一次库才验得出来。
+
 ## 四条不会松动的规则
 
 这三条在代码层强制，并且有测试证明（`pnpm test`）：
@@ -160,6 +186,10 @@ packages/core/       全部领域逻辑，零 UI 依赖
   resume/            主张选择、诚实性闸门、HTML/PDF 渲染、对照表
   dedup/             公司归并、岗位身份键、投递冷却
 apps/cli/            assit 命令
+apps/desktop/        Electron 壳（主进程直接 import core，无 sidecar）
+  src/main/          窗口、IPC、烟测
+  src/preload/       白名单式能力暴露
+  src/renderer/      React：今日 / 岗位池
 tests/               守门测试
 data/                SQLite + artifacts + facts（全部 gitignore）
 ```

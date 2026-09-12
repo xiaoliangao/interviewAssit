@@ -10,7 +10,11 @@
     "assit": "tsx apps/cli/src/index.ts",
     "typecheck": "tsc -b --force",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "gen:migrations": "node scripts/gen-migrations.mjs",
+    "desktop": "pnpm --filter @assit/desktop dev",
+    "desktop:build": "pnpm --filter @assit/desktop build",
+    "desktop:native": "node scripts/fetch-electron-sqlite.mjs"
   },
   "devDependencies": {
     "@assit/contract": "workspace:*",

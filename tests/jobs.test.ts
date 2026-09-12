@@ -6,14 +6,20 @@ import { Rubric, type Posting } from '@assit/contract';
 import {
   detectInjection,
   ignoreJob,
+  facets,
   ingestPosting,
+  jobDetail,
   openDb,
   pastedPosting,
   platformFromUrl,
+  queryJobs,
+  reparseJobs,
   roleFamily,
   rubricReview,
   scoreAllJobs,
   scoreJob,
+  todaySummary,
+  unignoreJob,
   validateTrace,
   type Db,
   type ScoreTrace,
@@ -430,5 +436,148 @@ describe('rubric-review：让忽略原因有消费方', () => {
     const review = rubricReview(db, 'p1', 'rv1');
     expect(review.highScoreIgnored).toEqual([]);
     expect(review.lowScoreApplied).toEqual([]);
+  });
+});
+
+describe('岗位池查询：CLI 和 UI 用同一份领域逻辑', () => {
+  const V = { profileVersion: 'p1', rubricVersion: 'rv1' };
+  const loaded = { rubric: RUBRIC, version: 'rv1', file: 'v.yaml' };
+
+  function seed(): void {
+    ingestPosting(db, posting({ platform_job_id: 'a' }));
+    ingestPosting(db, posting({
+      platform_job_id: 'b', company_name: '乙公司', title: 'Java开发工程师', city: '北京',
+      jd_text: '任职要求：博士学历，15 年以上经验。精通 COBOL。', salary_raw: '8-12K',
+    }));
+    scoreAllJobs(db, loaded, { profileVersion: 'p1' });
+  }
+
+  it('默认按分数排，硬门槛未过的沉底但不消失', () => {
+    seed();
+    const rows = queryJobs(db, V);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.hardGaps).toEqual([]);
+    expect(rows[1]!.hardGaps.length).toBeGreaterThan(0);
+  });
+
+  it('排序不乘 coverage —— 那等价于对 unknown 记负分', () => {
+    ingestPosting(db, posting({ platform_job_id: 'full' }));
+    // 披露极少但技术栈命中：分数高、coverage 低
+    ingestPosting(db, posting({
+      platform_job_id: 'thin', company_name: '丙公司',
+      jd_text: '精通 Go、Redis、MySQL、Kafka、Kubernetes。', salary_raw: '面议',
+    }));
+    scoreAllJobs(db, loaded, { profileVersion: 'p1' });
+    const rows = queryJobs(db, V);
+    const thin = rows.find((r) => r.company === '丙公司')!;
+    // 低披露不该被排序算法偷偷压下去，它只是带个标记
+    expect(thin.coverage!).toBeLessThan(0.6);
+    expect(thin.finalScore!).toBeGreaterThan(70);
+  });
+
+  it('已忽略的默认不出现，可显式包含', () => {
+    seed();
+    const [top] = queryJobs(db, V);
+    ignoreJob(db, top!.jobId, '通勤太远', top!.finalScore);
+    expect(queryJobs(db, V).map((r) => r.jobId)).not.toContain(top!.jobId);
+    const all = queryJobs(db, V, { includeIgnored: true });
+    expect(all.find((r) => r.jobId === top!.jobId)!.ignoredReason).toBe('通勤太远');
+    unignoreJob(db, top!.jobId);
+    expect(queryJobs(db, V).map((r) => r.jobId)).toContain(top!.jobId);
+  });
+
+  it('按分数、职能族、关键词筛选', () => {
+    seed();
+    expect(queryJobs(db, V, { minScore: 80 })).toHaveLength(1);
+    expect(queryJobs(db, V, { roleFamilies: ['backend'] }).length).toBeGreaterThan(0);
+    expect(queryJobs(db, V, { search: '乙公司', includeIgnored: true })).toHaveLength(1);
+  });
+
+  it('详情带完整 trace、三态字段与 JD 原文', () => {
+    seed();
+    const [top] = queryJobs(db, V);
+    const d = jobDetail(db, V, top!.jobId)!;
+    expect(d.trace!.components.core_stack).toBeDefined();
+    expect(d.jdText).toContain('任职要求');
+    expect(d.postings[0]!.platform).toBe('paste');
+    expect(d.attrs.tech_stack!.value).toContain('go');
+  });
+
+  it('JD 存档丢了也不该让详情页打不开', () => {
+    seed();
+    const [top] = queryJobs(db, V);
+    db.prepare('UPDATE postings SET jd_sha256 = ? WHERE job_id = ?').run('deadbeef'.repeat(8), top!.jobId);
+    const d = jobDetail(db, V, top!.jobId)!;
+    expect(d.jdText).toBeNull();
+    expect(d.trace).not.toBeNull();
+  });
+
+  it('今日：只统计真正需要你动手的东西', () => {
+    seed();
+    const t = todaySummary(db, V, { threshold: 80 });
+    expect(t.newToday).toBe(2);
+    expect(t.newHighScore).toBe(1);
+    expect(t.pendingAliases).toBeGreaterThanOrEqual(0);
+    expect(t.topNew[0]!.finalScore).toBeGreaterThanOrEqual(80);
+  });
+
+  it('今日会把连续失败的采集源拎出来', () => {
+    const ins = db.prepare(
+      `INSERT INTO collector_runs (source_id, platform, started_at, ok, error)
+       VALUES (?,?,datetime('now'),?,?)`,
+    );
+    ins.run('greenhouse:acme', 'greenhouse', 0, 'HTTP 404');
+    ins.run('greenhouse:acme', 'greenhouse', 0, 'HTTP 404');
+    const t = todaySummary(db, V);
+    expect(t.brokenSources[0]!.sourceId).toBe('greenhouse:acme');
+    expect(t.brokenSources[0]!.consecutiveFailures).toBe(2);
+  });
+
+  it('筛选器选项来自实际数据，空选项不出现', () => {
+    seed();
+    const f = facets(db);
+    expect(f.platforms).toEqual(['paste']);
+    expect(f.roleFamilies).toContain('backend');
+    expect(f.cities).not.toContain(null);
+  });
+});
+
+describe('reparse：改了解析器之后要能回灌', () => {
+  it('用当前解析器重算 attrs，JD 存档在就一定能重来', () => {
+    // attrs 是入库那一刻解析的。修完一个解析 bug，库里旧岗位还带着错的技术栈 ——
+    // 这个函数之于解析器，等同于 score --force 之于 rubric。
+    const r = ingestPosting(db, posting());
+    db.prepare(`UPDATE jobs SET attrs = '{}' WHERE id = ?`).run(r.jobId);
+
+    const out = reparseJobs(db, {});
+    expect(out.scanned).toBe(1);
+    expect(out.changed).toBe(1);
+
+    const attrs = JSON.parse((db.prepare('SELECT attrs FROM jobs WHERE id=?').get(r.jobId) as any).attrs);
+    expect(attrs.tech_stack.value).toContain('go');
+  });
+
+  it('没有变化时不写库，避免制造假的改动', () => {
+    ingestPosting(db, posting());
+    expect(reparseJobs(db, {}).changed).toBe(0);
+  });
+
+  it('JD 存档丢了就跳过，保留旧值总比清空强', () => {
+    const r = ingestPosting(db, posting());
+    db.prepare('UPDATE postings SET jd_sha256 = ? WHERE job_id = ?').run('0'.repeat(64), r.jobId);
+    const out = reparseJobs(db, {});
+    expect(out.noJd).toBe(1);
+    expect(out.changed).toBe(0);
+    const attrs = JSON.parse((db.prepare('SELECT attrs FROM jobs WHERE id=?').get(r.jobId) as any).attrs);
+    expect(attrs.tech_stack.value).toContain('go'); // 旧值还在
+  });
+
+  it('保留薪资出处与冲突标记这类非解析产物', () => {
+    const r = ingestPosting(db, posting());
+    db.prepare(`UPDATE jobs SET attrs = json_set(attrs, '$.salary_conflict', json('true')) WHERE id=?`).run(r.jobId);
+    reparseJobs(db, {});
+    const attrs = JSON.parse((db.prepare('SELECT attrs FROM jobs WHERE id=?').get(r.jobId) as any).attrs);
+    expect(attrs.salary_conflict).toBe(true);
+    expect(attrs.salary_months_confidence).toBeTruthy();
   });
 });

@@ -1,0 +1,28 @@
+{
+  "name": "@assit/desktop",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "rebuild": "cd ../../node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 && npx --yes prebuild-install -r electron -t $(node -p \"require('electron/package.json').version\") --tag-prefix v"
+  },
+  "dependencies": {
+    "@assit/contract": "workspace:*",
+    "@assit/core": "workspace:*",
+    "better-sqlite3": "^11.5.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.7.0",
+    "electron": "^33.2.0",
+    "electron-vite": "^2.3.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vite": "^5.4.10"
+  }
+}
