@@ -32,6 +32,29 @@ export interface OpenOptions {
   timeoutMs?: number;
 }
 
+/**
+ * 页面上一个可交互元素。`ref`（`@e1`）由 `snapshot` 产出。
+ *
+ * 为什么用 `@e` 而不是让模型吐 CSS selector：selector 是模型**猜**的，
+ * `@e` 是页面上真实存在的那个元素。代价是 ref 只在最近一次 snapshot 内有效，
+ * 页面一变就要重抓 —— 而这恰恰是对的：页面变了还照着旧坐标点下去，
+ * 是填表工具最危险的失败方式。
+ */
+export interface ElementRef {
+  ref: string;
+  tag: string;
+  type?: string;
+  name?: string;
+  id?: string;
+  label?: string;
+  placeholder?: string;
+  /** 元素附近的文本。中文站的字段名常常只在旁边的 div 里 */
+  nearby?: string;
+  required?: boolean;
+  value?: string;
+  options?: string[];
+}
+
 export interface BrowserBridge {
   readonly name: string;
   /** 桥是否可用。**不可用要给出可执行的下一步**，不是一句「失败」 */
@@ -45,6 +68,12 @@ export interface BrowserBridge {
   stopCapture(tabId: string): Promise<void>;
   /** 在页面里执行 JS。滚动加载靠它 —— 但**不用它发请求** */
   exec(tabId: string, js: string): Promise<unknown>;
+  /** 抽出页面上可交互的元素，带 `@e` 引用 */
+  snapshot(tabId: string, limit?: number): Promise<ElementRef[]>;
+  /** 往一个元素里写值。**不提交** */
+  fill(tabId: string, ref: string, value: string): Promise<void>;
+  /** 上传文件。用 DataTransfer 而不是 CDP setFileInputFiles —— 见 forms/fill.ts */
+  uploadFile(tabId: string, ref: string, filePath: string): Promise<void>;
   close(tabId: string): Promise<void>;
 }
 

@@ -5,6 +5,7 @@ import {
   type BridgeTab,
   type BrowserBridge,
   type CapturedResponse,
+  type ElementRef,
   type OpenOptions,
 } from './types.js';
 
@@ -160,6 +161,49 @@ export class AgentBrowserCliBridge implements BrowserBridge {
 
   async exec(tabId: string, js: string): Promise<unknown> {
     return this.json(['exec', '--tab', tabId, js]);
+  }
+
+  async snapshot(tabId: string, limit = 300): Promise<ElementRef[]> {
+    const r = await this.json<any>(['snapshot', '--tab', tabId, '--limit', String(limit), '--details']);
+    const items: any[] = Array.isArray(r) ? r : (r.elements ?? r.items ?? []);
+    return items
+      .map((e: any) => ({
+        ref: String(e.ref ?? e.id ?? ''),
+        tag: String(e.tag ?? e.tagName ?? '').toLowerCase(),
+        type: e.type ? String(e.type) : undefined,
+        name: e.name ? String(e.name) : undefined,
+        id: e.elementId ? String(e.elementId) : undefined,
+        label: e.label ? String(e.label) : undefined,
+        placeholder: e.placeholder ? String(e.placeholder) : undefined,
+        nearby: e.nearby ?? e.text ? String(e.nearby ?? e.text) : undefined,
+        required: Boolean(e.required),
+        value: e.value ? String(e.value) : undefined,
+        options: Array.isArray(e.options) ? e.options.map(String) : undefined,
+      }))
+      .filter((e: ElementRef) => e.ref !== '');
+  }
+
+  async fill(tabId: string, ref: string, value: string): Promise<void> {
+    await this.json(['fill', '--tab', tabId, ref, value]);
+  }
+
+  async uploadFile(tabId: string, ref: string, filePath: string): Promise<void> {
+    // 走 DataTransfer 而不是 CDP DOM.setFileInputFiles：React 受控组件听的是
+    // input/change 事件，走 CDP 会「文件进去了但页面状态没更新」——
+    // 界面上看不出来的那种失败。详见 forms/fill.ts。
+    const js = `(async () => {
+      const el = document.querySelector('input[type=file]');
+      if (!el) throw new Error('页面上没有文件输入框');
+      const res = await fetch(${JSON.stringify(`file://${filePath}`)});
+      const blob = await res.blob();
+      const dt = new DataTransfer();
+      dt.items.add(new File([blob], ${JSON.stringify(filePath.split('/').pop() ?? 'resume.pdf')}, { type: blob.type || 'application/pdf' }));
+      el.files = dt.files;
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      return el.files.length;
+    })()`;
+    await this.exec(tabId, js);
   }
 
   async close(tabId: string): Promise<void> {

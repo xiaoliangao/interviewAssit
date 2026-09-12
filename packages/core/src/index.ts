@@ -7,6 +7,7 @@ export * from './audio/index.js';
 export * from './facts/index.js';
 export * from './models/index.js';
 export * from './dedup/index.js';
+export * from './forms/index.js';
 export * from './guard/index.js';
 export * from './repomap/index.js';
 export * from './jobs/index.js';
