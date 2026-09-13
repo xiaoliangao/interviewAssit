@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import type { ChannelGroup, Facets, JobFilter, JobRow, SourceHealth, SourceRunResult } from '../../preload/index.js';
 import { JobDrawer } from './JobDrawer.js';
+import { PasteJob } from './PasteJob.js';
 
 /**
  * 岗位池。
@@ -27,6 +28,7 @@ export function JobPool(props: { onChanged: () => void }): JSX.Element {
   const [lastRun, setLastRun] = useState<SourceRunResult[] | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
   const [showSources, setShowSources] = useState(false);
+  const [pasting, setPasting] = useState(false);
 
   const [filter, setFilter] = useState<JobFilter>({ limit: 200 });
 
@@ -57,8 +59,8 @@ export function JobPool(props: { onChanged: () => void }): JSX.Element {
   const ignore = async (job: JobRow): Promise<void> => {
     const reason = window.prompt(
       `不投「${job.company} · ${job.title}」的原因？\n\n` +
-        '这句话不是随手写的：assit rubric-review 会把它聚类，\n' +
-        '告诉你 rubric 和你真实偏好差在哪。',
+        '这句话不是随手写的：系统会把这些原因聚类，\n' +
+        '告诉你「打分规则」和你的真实偏好差在哪。',
     );
     if (!reason?.trim()) return;
     await window.assit.ignore(job.jobId, reason.trim(), job.finalScore);
@@ -82,6 +84,7 @@ export function JobPool(props: { onChanged: () => void }): JSX.Element {
           <button disabled={busy !== null} onClick={() => void run('collect', () => window.assit.collect())}>
             {busy === 'collect' ? '采集中…' : '采集'}
           </button>
+          <button onClick={() => setPasting(true)} title="在招聘网站复制 JD，粘进来">粘贴岗位</button>
           <button
             className="primary"
             disabled={busy !== null}
@@ -181,8 +184,9 @@ export function JobPool(props: { onChanged: () => void }): JSX.Element {
         {showSources &&
           (sources.length === 0 ? (
             <p className="faint" style={{ margin: 0 }}>
-              还没配置采集源。编辑 <code>data/facts/sources.yaml</code>；
-              国内平台要登录，用 <code>assit ingest --clipboard</code> 手动粘贴即可，下游处理完全一样。
+              还没有自动采集源。BOSS / 前程无忧这类要登录的平台不走自动采集 ——
+              用上面的<b>「粘贴岗位」</b>把 JD 贴进来，去重、解析、打分、投递记录，
+              下游处理完全一样。
             </p>
           ) : (
             <table>
@@ -223,7 +227,7 @@ export function JobPool(props: { onChanged: () => void }): JSX.Element {
             <p className="spin">读取中…</p>
           ) : groups.length === 0 ? (
             <div className="empty">
-              没有岗位。点上面的「采集」，或者用 <code>assit ingest --clipboard</code> 粘一个进来。
+              池子是空的。点上面的<b>「粘贴岗位」</b>贴一份 JD 进来，或者「采集」拉一批。
             </div>
           ) : (
             groups.map((g) => (
@@ -302,7 +306,7 @@ export function JobPool(props: { onChanged: () => void }): JSX.Element {
           <p className="spin">读取中…</p>
         ) : rows.length === 0 ? (
           <div className="empty">
-            没有岗位。点上面的「采集」，或者用 <code>assit ingest --clipboard</code> 粘一个进来。
+            池子是空的。点上面的<b>「粘贴岗位」</b>贴一份 JD 进来，或者「采集」拉一批。
           </div>
         ) : (
           <table>
@@ -358,6 +362,7 @@ export function JobPool(props: { onChanged: () => void }): JSX.Element {
       </div>
 
       {openId && <JobDrawer jobId={openId} onClose={() => setOpenId(null)} />}
+      {pasting && <PasteJob onClose={() => setPasting(false)} onDone={() => { load(); props.onChanged(); }} />}
     </>
   );
 }

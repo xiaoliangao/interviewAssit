@@ -62,6 +62,13 @@ const api = {
   factsFieldStatus: (key: string, status: 'pending' | 'filled' | 'ignored') =>
     invoke<boolean>('facts:field-status', key, status),
   settings: () => invoke<SettingsView>('settings:read'),
+  factsEnsure: (which: string[]) => invoke<{ created: number }>('facts:ensure', which),
+  pasteJob: (input: { jdText: string; url?: string; company?: string; title?: string; city?: string; salaryRaw?: string }) =>
+    invoke<{ outcome: string; jobId: string; postingId: string }>('jobs:paste', input),
+  pickFile: (opts?: { title?: string; extensions?: string[] }) =>
+    invoke<string | null>('dialog:pick-file', opts ?? {}),
+  drillAdd: (input: { content: string; topic?: string; sourceType: string; sourceRef: string }) =>
+    invoke<{ id: string; created: boolean; upgraded: boolean }>('drill:add', input),
 
   openExternal: (url: string) => invoke<boolean>('shell:open', url),
   reveal: (p: string) => invoke<boolean>('shell:reveal', p),
@@ -134,6 +141,8 @@ export interface ScoreTrace {
 }
 
 export interface JobDetail extends JobRow {
+  postingId: string | null;
+  applyChannel: string | null;
   trace: ScoreTrace | null;
   attrs: Record<string, { value: unknown; confidence: string; source: string | null } | unknown>;
   jdText: string | null;
@@ -403,10 +412,8 @@ export interface SettingsView {
     detail: string;
   }[];
   routes: { task: string; provider: string; fallback: string[] }[];
-  dataDir: string;
+  /** 只用来给「在访达中显示」这个按钮用，不往界面上印 */
   dbPath: string;
-  registryDir: string;
-  dataPointer: string | null;
 }
 
 export interface TodaySummary {

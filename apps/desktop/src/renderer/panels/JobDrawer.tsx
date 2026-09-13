@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { JobDetail } from '../../preload/index.js';
+import type { JobDetail, Preflight } from '../../preload/index.js';
 
 const DIM_LABEL: Record<string, string> = {
   core_stack: '技术栈',
@@ -20,6 +20,12 @@ export function JobDrawer(props: { jobId: string; onClose: () => void }): JSX.El
   const [d, setD] = useState<JobDetail | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showJd, setShowJd] = useState(false);
+  const [applying, setApplying] = useState(false);
+  const [pre, setPre] = useState<Preflight | null>(null);
+  const [resumePath, setResumePath] = useState<string | null>(null);
+  const [greeting, setGreeting] = useState('');
+  const [override, setOverride] = useState(false);
+  const [applied, setApplied] = useState<string | null>(null);
 
   useEffect(() => {
     window.assit.jobDetail(props.jobId).then(setD).catch((e: Error) => setError(e.message));
@@ -53,18 +59,99 @@ export function JobDrawer(props: { jobId: string; onClose: () => void }): JSX.El
               <button onClick={props.onClose}>关闭</button>
             </div>
 
-            {d.urls.length > 0 && (
-              <p style={{ marginTop: 10 }}>
-                {d.urls.map((u) => (
-                  <button
-                    key={u}
-                    style={{ marginRight: 6 }}
-                    onClick={() => void window.assit.openExternal(u)}
-                  >
-                    在浏览器打开
-                  </button>
-                ))}
-              </p>
+            <p style={{ marginTop: 10 }}>
+              {d.urls.map((u) => (
+                <button key={u} style={{ marginRight: 6 }} onClick={() => void window.assit.openExternal(u)}>
+                  在浏览器打开
+                </button>
+              ))}
+              {!d.applied && !applying && d.postingId && (
+                <button
+                  className="primary"
+                  onClick={() => {
+                    setApplying(true);
+                    window.assit.applyPreflight(d.postingId!).then(setPre).catch((e: Error) => setError(e.message));
+                  }}
+                >
+                  我已投递
+                </button>
+              )}
+              {d.applied && <span className="tag good">已投</span>}
+            </p>
+
+            {applying && (
+              <div className="card">
+                <h2>记录这次投递</h2>
+                {applied ? (
+                  <>
+                    <p><b>{applied}</b></p>
+                    <p className="faint" style={{ marginBottom: 0 }}>
+                      当时发出的简历、JD、话术已经冻结下来。一个月后 HR 约你面试时，
+                      JD 可能早改了 —— 面试准备要基于<b>你投递时看到的那份</b>。
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <p className="faint" style={{ marginTop: 0 }}>
+                      这一步<b>不会替你投递</b>，它记录你已经投出去的那一次，
+                      并把当时发出的东西冻结下来。
+                    </p>
+                    {pre?.alreadyApplied && (
+                      <p className="err">这个岗位已经投过了（{pre.alreadyApplied.sentAt.slice(0, 10)}）。</p>
+                    )}
+                    {pre?.cooldown.blocked && (
+                      <div className="card warn">
+                        {pre.cooldown.reason}
+                        <label className="chk" style={{ marginTop: 6 }}>
+                          <input type="checkbox" checked={override} onChange={(e) => setOverride(e.target.checked)} />
+                          还是要投（换了部门、换了方向都可能是对的，但这该是你想过之后的决定）
+                        </label>
+                      </div>
+                    )}
+                    <div className="row" style={{ flexWrap: 'wrap' }}>
+                      <button
+                        onClick={() => {
+                          void window.assit.pickFile({ title: '选择你实际发出去的那份简历', extensions: ['pdf'] })
+                            .then((p) => p && setResumePath(p));
+                        }}
+                      >
+                        {resumePath ? '换一份简历' : '选择实际发出的简历 PDF'}
+                      </button>
+                      <span className="faint">
+                        {resumePath ? resumePath.split('/').pop() : '必选 —— 没有快照的投递记录三个月后什么也还原不出来'}
+                      </span>
+                    </div>
+                    <textarea
+                      rows={3}
+                      style={{ width: '100%', marginTop: 8 }}
+                      placeholder="实际发出的打招呼话术（可空）"
+                      value={greeting}
+                      onChange={(e) => setGreeting(e.target.value)}
+                    />
+                    <div className="row" style={{ marginTop: 8 }}>
+                      <button
+                        className="primary"
+                        disabled={!resumePath || Boolean(pre?.alreadyApplied) || (pre?.cooldown.blocked && !override)}
+                        onClick={() => {
+                          void window.assit
+                            .applyRecord({
+                              postingId: d.postingId!,
+                              channel: d.applyChannel ?? 'chat',
+                              resumePath: resumePath!,
+                              greeting: greeting || undefined,
+                              overrideCooldown: override,
+                            })
+                            .then((r) => setApplied(`已记录，冻结了 ${r.snapshots.length} 份快照`))
+                            .catch((e: Error) => setError(e.message));
+                        }}
+                      >
+                        确认已投递
+                      </button>
+                      <button onClick={() => { setApplying(false); setPre(null); }}>取消</button>
+                    </div>
+                  </>
+                )}
+              </div>
             )}
 
             {!t ? (

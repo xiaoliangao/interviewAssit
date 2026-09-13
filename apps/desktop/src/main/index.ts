@@ -104,6 +104,16 @@ function createWindow(): BrowserWindow {
       // 每一步都读回正文，确认不是空树。
       const script = `(async () => {
         const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+        // 打包成 app 之后界面上不该出现文件系统路径或命令行调用 —— 那是开发者视角。
+        // 每切一页抽查一次，防止它们悄悄回来。
+        // （这段是写在模板字符串里的 JS，不能出现反引号。）
+        const leaks = new Set();
+        const sniff = () => {
+          const t = document.body.innerText;
+          ['/Users/', 'data/facts', 'assit ', '.yaml', 'sqlite3'].forEach((k) => {
+            if (t.includes(k)) leaks.add(k);
+          });
+        };
         const go = (name) => {
           const b = [...document.querySelectorAll('.nav-item')].find(x => x.textContent.includes(name));
           b && b.click();
@@ -116,6 +126,7 @@ function createWindow(): BrowserWindow {
         go('岗位池');
         await sleep(1500);
         out.jobs = main();
+        sniff();
         out.rows = document.querySelectorAll('tbody tr').length;
         out.channels = [...document.querySelectorAll('.chhead h2')].map(h => h.innerText).join(' / ');
         out.companies = document.querySelectorAll('.cohead').length;
@@ -129,12 +140,14 @@ function createWindow(): BrowserWindow {
         go('设置');
         await sleep(1500);
         out.settings = [...document.querySelectorAll('main .card h2')].map(h => h.innerText).join(' / ');
+        sniff();
 
         go('事实库');
         await sleep(1200);
         out.facts = [...document.querySelectorAll('main .card h2')].map(h => h.innerText).join(' / ');
         out.factsInputs = document.querySelectorAll('main input, main select').length;
         out.factsStars = document.querySelectorAll('main .req').length;
+        sniff();
 
         go('投递管线');
         await sleep(1200);
@@ -143,11 +156,13 @@ function createWindow(): BrowserWindow {
         go('题库');
         await sleep(1200);
         out.drill = [...document.querySelectorAll('main h1, main .sub')].map(h => h.innerText).join(' ⏐ ');
+        sniff();
 
         go('面试录音');
         await sleep(1200);
         // rubric 报错横幅也在 main 里且很长，取尾部才看得到面板正文
         out.interview = main().slice(-700);
+        sniff();
         // 同意勾选框是这一屏的闸门：没勾上「开始录制」必须是禁用的
         const consent = document.querySelector('.consent input');
         const startBtn = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '开始录制');
@@ -159,6 +174,7 @@ function createWindow(): BrowserWindow {
           const after = [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '开始录制');
           out.startDisabledAfterConsent = after ? after.disabled : null;
         }
+        out.leaks = [...leaks];
         return JSON.stringify(out);
       })()`;
       setTimeout(() => {
@@ -173,6 +189,7 @@ function createWindow(): BrowserWindow {
             log(`ui-check 设置：${String(r.settings)}`);
             log(`ui-check 事实库：${String(r.facts)}`);
             log(`ui-check 事实库可编辑控件 ${r.factsInputs} 个 · 必填星标 ${r.factsStars} 个`);
+            log(`ui-check 路径/命令行泄漏：${(r.leaks as unknown as string[]).join('、') || '无'}`);
             log(`ui-check 投递管线：${String(r.apply)}`);
             log(`ui-check 题库：${String(r.drill)}`);
             log(`ui-check 面试录音（main 尾部）：\n${String(r.interview)}`);
@@ -185,6 +202,7 @@ function createWindow(): BrowserWindow {
               Number(r.factsInputs) > 10 &&
               Number(r.factsStars) > 0 &&
               Number(r.companies) > 0 &&
+              (r.leaks as unknown as string[]).length === 0 &&
               r.hasConsent === true &&
               r.startDisabledBeforeConsent === true &&
               r.startDisabledAfterConsent === false;

@@ -122,13 +122,23 @@ export function App(): JSX.Element {
       <main className="main">
         {ctx && !ctx.rubricVersion && (
           <div className="card bad">
-            <h2>没有可用的打分规则</h2>
-            <p className="muted" style={{ margin: 0 }}>
-              {ctx.rubricError ?? '在 data/facts/rubric/ 下放一个 yaml。'}
-              <br />
-              命令行跑一次 <code>assit init</code> 会生成带注释的模板。
-              岗位仍然可以采集入库，只是没有分数。
+            <h2>还没有打分规则</h2>
+            <p className="muted">
+              岗位仍然可以入库，只是<b>没有分数</b>。
+              {ctx.rubricError && (
+                <><br /><span className="faint">（现有规则读不了：{ctx.rubricError.slice(0, 160)}）</span></>
+              )}
             </p>
+            <button
+              className="primary"
+              onClick={() => {
+                void window.assit
+                  .factsEnsure(['rubric', 'profile'])
+                  .then(() => { refreshAll(); setPanel('facts'); });
+              }}
+            >
+              建一份默认规则，然后去填我的信息
+            </button>
           </div>
         )}
 

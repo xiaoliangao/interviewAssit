@@ -94,9 +94,8 @@ export function Settings(props: { ctx: AppContext | null }): JSX.Element {
           <div className="card warn" style={{ marginTop: 10 }}>
             <b>没有可用的本机模型。</b>
             <div className="faint" style={{ marginTop: 4 }}>
-              后果是具体的：私有仓库解析（<code>assit propose</code>）和面试录音转写会被
-              <b>路由层直接拦下</b>，不是降级到云端。装一个：
-              <code>brew install ollama && ollama pull qwen2.5-coder:7b</code>
+              后果是具体的：私有代码解析和面试录音转写会被<b>直接拦下</b>，不是降级到云端。
+              装一个本机模型（Ollama）之后回来点「重新探测」。
             </div>
           </div>
         )}
@@ -123,8 +122,7 @@ export function Settings(props: { ctx: AppContext | null }): JSX.Element {
           </table>
         )}
         <p className="faint" style={{ marginBottom: 0 }}>
-          路由表暂时改不了 —— 改它意味着改「哪些数据会出这台机器」，
-          比调一个下拉框重。要改先看 <code>docs/DESIGN.md §10</code>。
+          路由表暂时改不了 —— 改它意味着改「哪些数据会出这台机器」，比调一个下拉框重。
         </p>
       </div>
 
@@ -156,39 +154,18 @@ export function Settings(props: { ctx: AppContext | null }): JSX.Element {
       </div>
 
       <div className="card">
-        <h2>数据位置</h2>
+        <h2>数据</h2>
+        <p className="faint" style={{ marginTop: 0 }}>
+          所有数据都在<b>你这台机器上</b>：岗位、档案、投递快照、面试录音、题库。
+          没有账号，没有同步，没有服务端。
+        </p>
         {s && (
-          <>
-            <div className="comp">
-              <span className="name">数据目录</span>
-              <span className="val" />
-              <span className="mono">{s.dataDir}</span>
-            </div>
-            <div className="comp">
-              <span className="name">数据库</span>
-              <span className="val" />
-              <span className="mono">{s.dbPath}</span>
-            </div>
-            <div className="comp">
-              <span className="name">雇主注册表</span>
-              <span className="val" />
-              <span className="mono">{s.registryDir}</span>
-            </div>
-            <div className="comp">
-              <span className="name">指针文件</span>
-              <span className="val" />
-              <span className="mono">
-                {s.dataPointer ?? '（没有，用默认位置）'}
-                <div className="faint">
-                  打包后的应用 cwd 是 <code>/</code>，推不出仓库路径，所以靠它找到你的数据。
-                  <code>assit link-data .</code> 写它，删掉就回到默认位置 —— 数据不会动。
-                </div>
-              </span>
-            </div>
-            <p style={{ marginBottom: 0 }}>
-              <button onClick={() => void window.assit.reveal(s.dbPath)}>在访达中显示</button>
-            </p>
-          </>
+          <p style={{ marginBottom: 0 }}>
+            <button onClick={() => void window.assit.reveal(s.dbPath)}>在访达中显示</button>
+            <span className="faint" style={{ marginLeft: 8 }}>
+              要备份就整个文件夹拷走 —— 这是这个工具里唯一不可重建的东西。
+            </span>
+          </p>
         )}
       </div>
 

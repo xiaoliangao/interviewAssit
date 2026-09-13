@@ -153,6 +153,9 @@ export function queryJobs(db: Db, v: Versions, filter: JobFilter = {}): JobRow[]
 }
 
 export interface JobDetail extends JobRow {
+  /** 最近一次挂牌。记录投递要的是具体哪一次挂牌，不是 job */
+  postingId: string | null;
+  applyChannel: string | null;
   trace: ScoreTrace | null;
   attrs: StoredAttrs;
   jdText: string | null;
@@ -173,7 +176,8 @@ export function jobDetail(db: Db, v: Versions, jobId: string): JobDetail | null 
   const job = db.prepare('SELECT attrs FROM jobs WHERE id = ?').get(jobId) as { attrs: string };
   const postings = db
     .prepare(
-      `SELECT p.platform, p.url, p.collected_at AS collectedAt, p.collected_by AS collectedBy,
+      `SELECT p.id AS postingId, p.platform, p.url, p.apply_channel AS applyChannel,
+              p.collected_at AS collectedAt, p.collected_by AS collectedBy,
               p.jd_sha256 AS jdSha256,
               (SELECT COUNT(*) FROM posting_jd_history h WHERE h.posting_id = p.id) AS jdVersions
        FROM postings p WHERE p.job_id = ? ORDER BY p.collected_at DESC`,
@@ -192,6 +196,10 @@ export function jobDetail(db: Db, v: Versions, jobId: string): JobDetail | null 
 
   return {
     ...toRow(row),
+    // 记录投递要的是**具体哪一次挂牌**，不是 job —— 同一个岗位可能在
+    // 两个平台各挂一次，而你只投了其中一个。取最近采到的那条。
+    postingId: postings[0]?.postingId ?? null,
+    applyChannel: postings[0]?.applyChannel ?? null,
     trace: row.traceJson ? JSON.parse(row.traceJson) : null,
     attrs: JSON.parse(job?.attrs ?? '{}'),
     jdText,

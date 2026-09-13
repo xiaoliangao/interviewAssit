@@ -150,7 +150,7 @@ export function Today(props: {
             而猜错的后果是两家不同的公司被合成一家、岗位去重跟着错。
             <br />
             <span className="faint">
-              确认界面排在 M2；现在可以用 <code>sqlite3</code> 看 <code>company_aliases</code> 表。
+              公司归并的人工确认界面还没做 —— 在那之前，同一家公司的不同写法可能被当成两家。
             </span>
           </p>
         </div>
@@ -160,9 +160,7 @@ export function Today(props: {
         <div className="card">
           <p className="muted" style={{ margin: 0 }}>
             没有待办。
-            {data.newToday === 0 && ' 今天还没采集到新岗位 —— 点上面的「采集」跑一次，或者用 '}
-            {data.newToday === 0 && <code>assit ingest --clipboard</code>}
-            {data.newToday === 0 && ' 手动粘一个进来。'}
+            {data.newToday === 0 && ' 今天还没有新岗位 —— 去岗位池点「采集」，或者「粘贴岗位」贴一份进来。'}
           </p>
         </div>
       )}

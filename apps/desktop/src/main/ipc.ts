@@ -1,4 +1,4 @@
-import { ipcMain, shell } from 'electron';
+import { dialog, ipcMain, shell } from 'electron';
 import {
   DEFAULT_PROVIDERS,
   DEFAULT_ROUTES,
@@ -23,11 +23,11 @@ import {
   openDb,
   listFieldRequests,
   pipeline,
-  readDataPointer,
   readProfileDraft,
   readRubricDraft,
   preflight,
   paths,
+  pastedPosting,
   pruneRecordings,
   queryJobs,
   recordApplication,
@@ -36,6 +36,7 @@ import {
   reconcileFieldRequests,
   saveProfileDraft,
   saveRubricDraft,
+  scaffold,
   scoreAllJobs,
   setFieldRequestStatus,
   setRecordingJob,
@@ -298,6 +299,45 @@ export function registerIpc(): void {
   handle('facts:sync', () => syncFacts(getDb(), loadFactsOrThrow()));
 
   // ── 设置（DESIGN §10）─────────────────────────────────────────────────
+  // 打包后的应用没有命令行，所以「缺了就补一份」必须能在界面里发生。
+  // 只补缺的，绝不覆盖已有文件。
+  handle('facts:ensure', (which: string[]) => {
+    const r = scaffold(false, which);
+    return { created: r.created.length, backedUp: r.backedUp.length };
+  });
+
+  // 通道 0：粘贴入库。零风险、覆盖一切平台，而且是桌面端唯一
+  // 不依赖采集器就能往池子里加岗位的路径。
+  handle('jobs:paste', (input: {
+    jdText: string; url?: string; company?: string; title?: string; city?: string; salaryRaw?: string;
+  }) => {
+    if (!input.jdText?.trim()) throw new Error('JD 正文不能为空');
+    let extraTech: string[] = [];
+    try {
+      extraTech = loadRubric().rubric.profile.stack;
+    } catch {
+      /* 没配 rubric 也能入库，只是不扩展技术词表 */
+    }
+    const r = ingestPosting(getDb(), pastedPosting(input), { extraTech });
+    return { outcome: r.outcome, jobId: r.jobId, postingId: r.postingId };
+  });
+
+  // 原生文件选择框。渲染进程拿不到真实路径（浏览器的 File 只给文件名），
+  // 而记录一次投递需要读那个 PDF 的字节。
+  handle('dialog:pick-file', async (opts: { title?: string; extensions?: string[] }) => {
+    const r = await dialog.showOpenDialog({
+      title: opts?.title ?? '选择文件',
+      properties: ['openFile'],
+      filters: opts?.extensions ? [{ name: '文件', extensions: opts.extensions }] : undefined,
+    });
+    return r.canceled ? null : (r.filePaths[0] ?? null);
+  });
+
+  handle('drill:add', (input: {
+    content: string; topic?: string; sourceType: string; sourceRef: string;
+    answerStandard?: string; answerMine?: string;
+  }) => addQuestion(getDb(), { ...input, sourceType: input.sourceType as never }));
+
   handle('settings:read', async () => {
     const providers = [];
     for (const spec of DEFAULT_PROVIDERS) {
@@ -323,10 +363,9 @@ export function registerIpc(): void {
       routes: Object.entries(DEFAULT_ROUTES).map(([task, r]) => ({
         task, provider: r.provider, fallback: r.fallback,
       })),
-      dataDir: paths.data,
+      // 只回 dbPath，而且只给「在访达中显示」用。
+      // 打包后的应用不该把文件系统路径印在界面上 —— 那是开发者视角。
       dbPath: paths.db,
-      registryDir: paths.registry,
-      dataPointer: readDataPointer(),
     };
   });
 

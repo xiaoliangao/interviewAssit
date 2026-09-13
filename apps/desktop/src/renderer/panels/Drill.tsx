@@ -30,6 +30,8 @@ export function Drill(): JSX.Element {
   const [revealed, setRevealed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [last, setLast] = useState<string | null>(null);
+  const [adding, setAdding] = useState(false);
+  const [nq, setNq] = useState({ content: '', topic: '', sourceType: 'real_interview', sourceRef: '' });
 
   const load = useCallback(() => {
     window.assit.drillDue(50).then((r) => { setDue(r); setIdx(0); setRevealed(false); })
@@ -60,6 +62,8 @@ export function Drill(): JSX.Element {
       <div className="page-head">
         <h1>题库 & 复习</h1>
         {board && <span className="muted">今天到期 {board.dueNow} / 共 {board.total}</span>}
+        <div className="spacer" />
+        <button onClick={() => setAdding(true)}>加一道题</button>
       </div>
       <p className="sub">真实面试答错的题排最前，而且重复得更密 —— 那是有人真的拿它筛过你。</p>
 
@@ -71,7 +75,7 @@ export function Drill(): JSX.Element {
         ) : !current ? (
           <div className="empty">
             {board?.total === 0
-              ? <>题库是空的。命令行录入：<code>assit questions add --content … --source-ref …</code></>
+              ? <>题库是空的。点右上角<b>「加一道题」</b>。</>
               : <>今天的题都过完了。{last && <span className="faint"> {last}</span>}</>}
           </div>
         ) : (
@@ -122,6 +126,48 @@ export function Drill(): JSX.Element {
           </>
         )}
       </div>
+
+      {adding && (
+        <div className="drawer-backdrop" onClick={() => setAdding(false)}>
+          <div className="drawer" onClick={(e) => e.stopPropagation()}>
+            <div className="row"><h2 style={{ flex: 1 }}>加一道题</h2><button onClick={() => setAdding(false)}>关闭</button></div>
+            <p className="faint">
+              <b>来源必填。</b>「这题哪来的」决定了你该花多少时间在它上面 ——
+              一道大厂真题和一道不知哪抄来的题，复习优先级不一样。
+              没有来源的题进了库就再也分不清。
+            </p>
+            <textarea rows={5} style={{ width: '100%' }} placeholder="题目"
+              value={nq.content} onChange={(e) => setNq({ ...nq, content: e.target.value })} />
+            <div className="row" style={{ marginTop: 8, flexWrap: 'wrap' }}>
+              <select value={nq.sourceType} onChange={(e) => setNq({ ...nq, sourceType: e.target.value })}>
+                <option value="real_interview">我面到的真题</option>
+                <option value="manual">手动录入的面经</option>
+                <option value="web_scrape">网上看到的</option>
+                <option value="official_doc">官方文档</option>
+              </select>
+              <input style={{ minWidth: 220, flex: 1 }} placeholder="来源 *（如「2026-09-12 某某科技一面」或链接）"
+                value={nq.sourceRef} onChange={(e) => setNq({ ...nq, sourceRef: e.target.value })} />
+              <input style={{ width: 120 }} placeholder="主题（MySQL）"
+                value={nq.topic} onChange={(e) => setNq({ ...nq, topic: e.target.value })} />
+            </div>
+            <div className="row" style={{ marginTop: 10 }}>
+              <button className="primary" disabled={!nq.content.trim() || !nq.sourceRef.trim()}
+                onClick={() => {
+                  void window.assit.drillAdd(nq)
+                    .then((r) => {
+                      setLast(r.created ? '已加入题库' : r.upgraded ? '这题已有，可信度提升了' : '这题已经在库里了');
+                      setNq({ content: '', topic: '', sourceType: nq.sourceType, sourceRef: nq.sourceRef });
+                      load();
+                    })
+                    .catch((e: Error) => setError(e.message));
+                }}>
+                加入题库
+              </button>
+              <span className="faint">真题默认标「已核实」，网上抄的默认「未核实」。</span>
+            </div>
+          </div>
+        </div>
+      )}
 
       {board && board.weakest.length > 0 && (
         <div className="card">

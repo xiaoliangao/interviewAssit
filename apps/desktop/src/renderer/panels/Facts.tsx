@@ -384,7 +384,6 @@ export function Facts(props: { onChanged: () => void }): JSX.Element {
         <h2>求职意向</h2>
         <p className="faint" style={{ marginTop: 0 }}>
           这一段既进网申表单，也是打分的依据 —— 分数是「这个岗位<b>对你</b>合不合适」。
-          {v.rubricFile && <> 打分部分写进 <code>{v.rubricFile}</code>。</>}
         </p>
         <table className="formtable">
           <tbody>
@@ -453,8 +452,8 @@ export function Facts(props: { onChanged: () => void }): JSX.Element {
           </tbody>
         </table>
         <p className="faint" style={{ marginBottom: 0 }}>
-          权重、硬门槛、封顶规则<b>刻意不放在这里</b> —— 改它们要理解「未知不计入分母」
-          「封顶不是扣分」这些语义，而那些语义写在 rubric 文件的注释里。
+          权重、硬门槛、封顶规则<b>刻意不放在这里</b> —— 改它们等于改「什么样的岗位算好」，
+          比调一个下拉框重得多。
         </p>
       </div>
 
@@ -462,8 +461,7 @@ export function Facts(props: { onChanged: () => void }): JSX.Element {
         <h2>主张账本 <span className="faint" style={{ fontWeight: 400 }}>（只读）</span></h2>
         <p className="faint" style={{ marginTop: 0 }}>
           叙事性资产：你做过什么、做到什么程度。<b>责任等级由面试结果改</b> ——
-          答砸了会自动降级，不由你在表单里随手调。录入走 <code>data/facts/claims/</code>，
-          或 <code>assit scan</code> + <code>assit propose</code> 从真实仓库长出来。
+          答砸了会自动降级，不由你在表单里随手调（那条边在「面试录音」那一页）。
         </p>
         {v.claims.length === 0 ? (
           <div className="empty">
@@ -486,8 +484,7 @@ export function Facts(props: { onChanged: () => void }): JSX.Element {
       </div>
 
       <p className="faint" style={{ margin: '4px 0 20px' }}>
-        全部写进 <code>{v.profileFile}</code>。文件是真源，SQLite 只是索引层 ——
-        你也可以直接用编辑器改，那边每个字段上面都有注释。
+        点「保存」写入本机，点「同步进库」让打分和简历用上新值。数据只在你这台机器上。
       </p>
     </>
   );

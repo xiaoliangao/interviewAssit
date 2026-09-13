@@ -108,8 +108,8 @@ export function Apply(): JSX.Element {
           <p className="spin">读取中…</p>
         ) : rows.length === 0 ? (
           <div className="empty">
-            还没有投递记录。投完一家之后在命令行跑：
-            <code>assit apply &lt;postingId&gt; --confirm --resume &lt;pdf&gt;</code>
+            还没有投递记录。<b>在岗位池里点开一个岗位 → 「我已投递」</b>，
+            当时发出的简历、JD、话术、表单会被一起冻结下来。
           </div>
         ) : (
           <table>
