@@ -14,7 +14,8 @@
     "gen:migrations": "node scripts/gen-migrations.mjs",
     "desktop": "pnpm --filter @assit/desktop dev",
     "desktop:build": "pnpm --filter @assit/desktop build",
-    "desktop:native": "node scripts/fetch-electron-sqlite.mjs"
+    "desktop:native": "node scripts/fetch-electron-sqlite.mjs",
+    "desktop:package": "pnpm desktop:native && pnpm --filter @assit/desktop package"
   },
   "devDependencies": {
     "@assit/contract": "workspace:*",

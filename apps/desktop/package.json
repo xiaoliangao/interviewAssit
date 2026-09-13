@@ -8,7 +8,8 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "start": "electron-vite preview",
-    "rebuild": "cd ../../node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 && npx --yes prebuild-install -r electron -t $(node -p \"require('electron/package.json').version\") --tag-prefix v"
+    "rebuild": "cd ../../node_modules/.pnpm/better-sqlite3@*/node_modules/better-sqlite3 && npx --yes prebuild-install -r electron -t $(node -p \"require('electron/package.json').version\") --tag-prefix v",
+    "package": "electron-vite build && electron-builder --config electron-builder.yml"
   },
   "dependencies": {
     "@assit/contract": "workspace:*",
@@ -20,6 +21,7 @@
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.7.0",
     "electron": "^33.2.0",
+    "electron-builder": "^26.15.3",
     "electron-vite": "^2.3.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",

@@ -14,3 +14,6 @@ data/
 # 用 pnpm desktop:native 重新拉，别提交。
 apps/desktop/native/
 apps/desktop/out/
+
+# 打包产物：257MB 的 Electron 运行时，不进 git
+apps/desktop/release/

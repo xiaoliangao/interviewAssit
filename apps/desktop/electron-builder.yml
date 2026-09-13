@@ -1,0 +1,41 @@
+# 打包配置。目标是「双击能开」，不是「上架」。
+appId: dev.assit.interview
+productName: Assit 求职助手
+directories:
+  output: release
+  buildResources: build
+
+files:
+  - out/**/*
+  - package.json
+
+# 原生模块和注册表不进 asar —— .node 必须是磁盘上的真实文件才能 dlopen，
+# 注册表是要给人看和改的 YAML，塞进 asar 就没法编辑了。
+extraResources:
+  - from: native
+    to: native
+  - from: ../../vendor/employer-registry
+    to: employer-registry
+
+# **不要让 electron-builder 重编译原生模块。**
+# 它的 @electron/rebuild 会把 node_modules 里那份 better-sqlite3 就地换成
+# Electron ABI，于是 CLI 和 392 个测试当场全挂（NODE_MODULE_VERSION 127 vs 130）。
+# Electron 需要的那份已经由 `pnpm desktop:native` 放在 native/ 并通过
+# extraResources 打进去了，这里不需要再编一次。
+npmRebuild: false
+nodeGypRebuild: false
+buildDependenciesFromSource: false
+
+asar: true
+# core 是 workspace 里的 TS 源码，已经被 electron-vite 打进 bundle，
+# 不需要再进 node_modules。只留 better-sqlite3 这一个真正的原生依赖。
+asarUnpack:
+  - "**/*.node"
+
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dir
+      arch: [arm64]
+  # 自用工具，不签名。Gatekeeper 会拦一次，右键「打开」即可。
+  identity: null

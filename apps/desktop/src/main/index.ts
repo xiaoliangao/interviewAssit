@@ -21,6 +21,23 @@ function bootstrapEnv(): void {
   const pkgRoot = path.resolve(here, '../..');
   const repoRoot = path.resolve(here, '../../../..');
 
+  // 打包之后 here 在 app.asar 里面，上面那两个路径没有意义。
+  // 资源改从 process.resourcesPath 取，数据落到用户目录 ——
+  // 和 core 的 dataDir() 兜底到同一个地方，这样 CLI 和应用看到同一个库。
+  if (app.isPackaged) {
+    const res = process.resourcesPath;
+    if (!process.env.ASSIT_SQLITE_NATIVE_BINDING) {
+      process.env.ASSIT_SQLITE_NATIVE_BINDING = path.join(res, 'native', 'better_sqlite3.node');
+    }
+    if (!process.env.ASSIT_REGISTRY_DIR) {
+      process.env.ASSIT_REGISTRY_DIR = path.join(res, 'employer-registry');
+    }
+    // **数据目录不在这里定死。** 交给 core 的 dataDir() 去解析，
+    // 它会先看 ~/.assit-interview/config.json 的指针 —— 否则
+    // 「用 CLI 采的岗位在应用里看不到」这个问题就没法修。
+    return;
+  }
+
   const nativeBinding = path.resolve(pkgRoot, 'native/better_sqlite3.node');
   if (!process.env.ASSIT_SQLITE_NATIVE_BINDING) {
     if (!existsSync(nativeBinding)) {

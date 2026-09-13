@@ -57,6 +57,7 @@ import {
   parseSplitOutput,
   paths,
   pipeline,
+  readDataPointer,
   preflight,
   pruneRecordings,
   persistExplanation,
@@ -77,6 +78,8 @@ import {
   scoreAllJobs,
   sourceHealth,
   writeBackRegistry,
+  userConfigFile,
+  writeDataPointer,
   writeIcs,
   syncFacts,
   transcribeRecording,
@@ -1509,6 +1512,26 @@ program
     } finally {
       db.close();
     }
+  });
+
+program
+  .command('link-data [dir]')
+  .description('告诉打包后的桌面应用「我的数据在哪」（写一个指针文件，不搬动数据）')
+  .action((dir) => {
+    if (!dir) {
+      const cur = readDataPointer();
+      console.log(`当前数据目录：${paths.data}`);
+      console.log(cur ? `指针文件：${userConfigFile()} → ${cur}` : C.dim(`没有指针文件（${userConfigFile()}）`));
+      console.log('');
+      console.log(C.dim('  打包后的应用 cwd 是 `/`，推不出任何仓库路径，所以需要这个指针。'));
+      console.log(C.dim('  指向当前数据目录：assit link-data .'));
+      return;
+    }
+    const target = dir === '.' ? paths.data : dir;
+    const file = writeDataPointer(target);
+    console.log(`${C.green('ok')} ${file}`);
+    console.log(C.dim(`  → ${path.resolve(target.replace(/^~/, process.env.HOME ?? '~'))}`));
+    console.log(C.dim('  **数据一个字节都没动。** 删掉这个文件就回到默认位置。'));
   });
 
 program

@@ -3,13 +3,64 @@ import path from 'node:path';
 import fs from 'node:fs';
 
 /**
- * 数据根目录。默认是仓库下的 data/，可用 ASSIT_DATA_DIR 覆盖（测试用临时目录）。
+ * 数据根目录。优先级：`ASSIT_DATA_DIR` → 仓库下的 `data/` → `~/.assit-interview/data`。
+ *
+ * 三层的理由是 **CLI 和桌面端必须看到同一个库**。不然你会
+ * `assit collect` 采了 200 个岗位，打开应用发现一个都没有 —— 而这种不一致
+ * 极难自己想明白（两边都「正常工作」，只是各看各的）。
+ *
  * data/ 整个 gitignore；data/facts/ 自己是一个独立的私有 git 仓库。
  */
 export function dataDir(): string {
   const env = process.env.ASSIT_DATA_DIR;
   if (env) return path.resolve(env.replace(/^~/, homedir()));
-  return path.resolve(process.cwd(), 'data');
+
+  // 仓库里已经有 data/ 就用它：从源码跑的时候，CLI 和桌面端必须看到同一个库 ——
+  // 不然你会 `assit collect` 采了 200 个岗位，打开应用发现一个都没有。
+  const local = path.resolve(process.cwd(), 'data');
+  if (fs.existsSync(local)) return local;
+
+  // 打包后的应用没有「仓库根」这个概念，cwd 是 `/`。
+  // 指针文件让它能找到你真正的数据目录 —— 见 userConfigFile() 那段。
+  const pointed = readDataPointer();
+  if (pointed) return pointed;
+
+  // 都没有就落到用户目录下一个固定位置。
+  // 刻意不用 Electron 的 app.getPath('userData')：core 不认识 Electron，
+  // 而且那个路径 CLI 猜不到 —— 两边必须能算出同一个答案。
+  return path.join(homedir(), '.assit-interview', 'data');
+}
+
+/** `~/.assit-interview/config.json`。只放「数据在哪」，不放别的。 */
+export function userConfigFile(): string {
+  return path.join(homedir(), '.assit-interview', 'config.json');
+}
+
+/**
+ * 打包后的应用怎么找到你的数据。
+ *
+ * 它的 cwd 是 `/`，推不出任何仓库路径。解决办法是一个指针文件，
+ * 而不是把数据搬走 —— **搬动用户的数据目录不该是安装一个应用的副作用**。
+ * 指针是可逆的：删掉文件就回到默认位置，数据一个字节都没动过。
+ */
+export function readDataPointer(): string | null {
+  try {
+    const raw = JSON.parse(fs.readFileSync(userConfigFile(), 'utf8')) as { dataDir?: string };
+    if (!raw.dataDir) return null;
+    const p = path.resolve(raw.dataDir.replace(/^~/, homedir()));
+    return fs.existsSync(p) ? p : null;
+  } catch {
+    return null;
+  }
+}
+
+export function writeDataPointer(dir: string): string {
+  const abs = path.resolve(dir.replace(/^~/, homedir()));
+  if (!fs.existsSync(abs)) throw new Error(`目录不存在：${abs}`);
+  const file = userConfigFile();
+  fs.mkdirSync(path.dirname(file), { recursive: true });
+  fs.writeFileSync(file, `${JSON.stringify({ dataDir: abs }, null, 2)}\n`, 'utf8');
+  return file;
 }
 
 /**
