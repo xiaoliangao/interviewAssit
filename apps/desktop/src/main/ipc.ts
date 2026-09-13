@@ -14,9 +14,12 @@ import {
   loadRubric,
   listRecordings,
   liveRecordings,
+  loadFactsOrThrow,
   loadSources,
   openDb,
   pipeline,
+  readProfileDraft,
+  readRubricDraft,
   preflight,
   paths,
   pruneRecordings,
@@ -24,10 +27,13 @@ import {
   recordApplication,
   recoverStale,
   runSource,
+  saveProfileDraft,
+  saveRubricDraft,
   scoreAllJobs,
   setRecordingJob,
   setRecordingKeep,
   sourceHealth,
+  syncFacts,
   startRecording,
   stopRecording,
   todaySummary,
@@ -238,6 +244,38 @@ export function registerIpc(): void {
     gradeQuestion(getDb(), id, grade as 0 | 1 | 2 | 3 | 4 | 5),
   );
   handle('drill:claims', () => claimDrillStats(getDb()));
+
+  // ── 事实库（DESIGN §5）───────────────────────────────────────────────
+  //
+  // 写的是 data/facts/*.yaml，**不是 SQLite**。文件是真源 ——
+  // 一旦分叉你就有两份档案，而且永远说不清哪份是对的。
+  handle('facts:read', () => {
+    const validation = validateFacts();
+    const rubric = readRubricDraft();
+    let claims: { id: string; fact: string; level: string; status: string }[] = [];
+    try {
+      claims = loadFactsOrThrow().claims.map((c) => ({
+        id: c.id, fact: c.source_fact,
+        level: c.responsibility_level, status: c.verification_status,
+      }));
+    } catch {
+      // 档案没填完时 loadFactsOrThrow 会拒绝 —— 那正是这一屏要解决的问题，
+      // 不该因此整页打不开
+    }
+    return {
+      profile: readProfileDraft(),
+      profileFile: paths.profile,
+      rubric: rubric.profile,
+      rubricFile: rubric.file,
+      claims,
+      findings: validation.findings,
+    };
+  });
+  handle('facts:save-profile', (draft: any) => saveProfileDraft(draft));
+  handle('facts:save-rubric', (draft: any) => saveRubricDraft(draft));
+  // 同步是「文件 → SQLite」。档案不合法时 loadFactsOrThrow 会拒绝，
+  // 错误信息直接回到界面上 —— 那正是你要修的东西。
+  handle('facts:sync', () => syncFacts(getDb(), loadFactsOrThrow()));
 
   handle('shell:open', async (url: string) => {
     if (!/^https?:\/\//i.test(url)) throw new Error('只允许打开 http(s) 链接');

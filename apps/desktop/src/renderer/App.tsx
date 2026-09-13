@@ -2,21 +2,18 @@ import { useCallback, useEffect, useState } from 'react';
 import type { AppContext } from '../preload/index.js';
 import { Apply } from './panels/Apply.js';
 import { Drill } from './panels/Drill.js';
+import { Facts } from './panels/Facts.js';
 import { Interview } from './panels/Interview.js';
 import { JobPool } from './panels/JobPool.js';
 import { Today } from './panels/Today.js';
 
-type PanelId = 'today' | 'jobs' | 'apply' | 'interview' | 'drill';
+type PanelId = 'today' | 'jobs' | 'apply' | 'facts' | 'interview' | 'drill';
 
 /**
  * 六个面板是最终形态，但按阶段落地（见 docs/DESIGN.md §14）。
  * 没做的明着灰在这里，而不是假装存在然后点进去是个空页 ——
  * 你自己用这个工具，骗自己没有意义。
  */
-const PLANNED = [
-  { id: 'facts', label: '事实库 & 简历', stage: '按需（现在用 CLI）' },
-];
-
 export function App(): JSX.Element {
   const [panel, setPanel] = useState<PanelId>('today');
   const [ctx, setCtx] = useState<AppContext | null>(null);
@@ -63,6 +60,13 @@ export function App(): JSX.Element {
             <span>投递管线</span>
           </button>
           <button
+            className={`nav-item ${panel === 'facts' ? 'active' : ''}`}
+            onClick={() => setPanel('facts')}
+          >
+            <span>事实库 & 简历</span>
+            {ctx && !ctx.factsOk && <span className="nav-badge">{ctx.factsErrors}</span>}
+          </button>
+          <button
             className={`nav-item ${panel === 'interview' ? 'active' : ''}`}
             onClick={() => setPanel('interview')}
           >
@@ -80,15 +84,6 @@ export function App(): JSX.Element {
             <span>题库 & 复习</span>
           </button>
 
-          <div className="nav-section">尚未落地</div>
-          {PLANNED.map((p) => (
-            <div key={p.id} className="nav-item disabled" title={`计划在 ${p.stage}`}>
-              <span>{p.label}</span>
-              <span className="faint" style={{ fontSize: 10 }}>
-                {p.stage}
-              </span>
-            </div>
-          ))}
         </nav>
 
         <div className="ctx">
@@ -148,6 +143,7 @@ export function App(): JSX.Element {
         */}
         {panel === 'apply' && <Apply key={`a${reloadKey}`} />}
         {panel === 'interview' && <Interview onRecordingChange={setRecording} />}
+        {panel === 'facts' && <Facts key={`f${reloadKey}`} onChanged={refreshAll} />}
         {panel === 'drill' && <Drill key={`d${reloadKey}`} />}
       </main>
     </div>

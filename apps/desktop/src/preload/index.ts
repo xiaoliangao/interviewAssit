@@ -53,6 +53,12 @@ const api = {
     invoke<{ dueInDays: number; nextReviewAt: string }>('drill:grade', id, grade),
   drillClaims: () => invoke<ClaimDrillStat[]>('drill:claims'),
 
+  // 事实库
+  factsRead: () => invoke<FactsView>('facts:read'),
+  factsSaveProfile: (d: ProfileDraft) => invoke<SaveResult>('facts:save-profile', d),
+  factsSaveRubric: (d: RubricDraft) => invoke<SaveResult>('facts:save-rubric', d),
+  factsSync: () => invoke<SyncReport>('facts:sync'),
+
   openExternal: (url: string) => invoke<boolean>('shell:open', url),
   reveal: (p: string) => invoke<boolean>('shell:reveal', p),
 };
@@ -293,6 +299,62 @@ export interface ClaimDrillStat {
   solid: number;
   failed: number;
   lastAsked: string | null;
+}
+
+export interface ProfileDraft {
+  fields: Record<string, string>;
+  records: {
+    education: Record<string, any>[];
+    employment: Record<string, any>[];
+    certificate: Record<string, any>[];
+    language: Record<string, any>[];
+    award: Record<string, any>[];
+  };
+  preferences: Record<string, any>;
+}
+
+export interface RubricDraft {
+  degree?: string;
+  exp_years?: number;
+  cities?: string[];
+  accept_remote?: boolean;
+  salary_floor_yuan?: number;
+  salary_target_yuan?: number;
+  stack?: string[];
+  target_roles?: string[];
+  acceptable_schedules?: string[];
+}
+
+export interface SaveResult {
+  file: string;
+  issues: { path: string; message: string }[];
+}
+
+export interface Finding {
+  severity: 'error' | 'warn' | 'info';
+  file: string;
+  where?: string;
+  message: string;
+  hint?: string;
+}
+
+export interface SyncReport {
+  profileFields: number;
+  profileRecords: number;
+  claimsInserted: number;
+  claimsUpdated: number;
+  claimsUnchanged: number;
+  events: number;
+  repos: number;
+}
+
+export interface FactsView {
+  profile: ProfileDraft;
+  profileFile: string;
+  rubric: RubricDraft;
+  rubricFile: string | null;
+  claims: { id: string; fact: string; level: string; status: string }[];
+  findings: Finding[];
 }
 
 export interface TodaySummary {
