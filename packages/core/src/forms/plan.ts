@@ -1,5 +1,6 @@
 import type { ElementRef } from '../collectors/bridge/types.js';
 import type { Db } from '../db/index.js';
+import { recordMissingField } from '../facts/requests.js';
 import { classifyField, fieldText, MIN_CONFIDENCE, type FieldClass, type FieldMatch } from './classify.js';
 
 /**
@@ -95,6 +96,14 @@ export interface PlanOptions {
   profileFields: Record<string, string>;
   /** 简历 PDF 路径，用于 type=file */
   resumePath?: string;
+  /**
+   * 把「这个站问了但档案里没有」记进 `profile_field_requests`。
+   *
+   * 这是反馈边：中文网申会问一堆 schema 里压根没有的字段（政治面貌、籍贯、
+   * 紧急联系人……），穷举不完也不该穷举。让表单来告诉档案缺什么，
+   * 下次同一个字段就有值了。
+   */
+  recordMissing?: boolean;
 }
 
 export function planForm(
@@ -106,6 +115,7 @@ export function planForm(
 ): FormPlan {
   const learned = loadFieldMap(db, domain);
   const fields: PlannedField[] = [];
+  const missing: { key?: string; label: string; cls: FieldClass; el: ElementRef }[] = [];
 
   for (const el of elements) {
     if (el.tag === 'button' || el.type === 'submit' || el.type === 'hidden') continue;
@@ -131,11 +141,16 @@ export function planForm(
       const v = opts.profileFields[m.profileKey];
       action = v ? 'copy' : 'ask_user';
       value = v ?? null;
+      // 认出来了但档案里没值 —— 这是最值得补的一类：字段是已知的，只差你填
+      if (!v) missing.push({ key: m.profileKey, label: el.label ?? m.profileKey, cls: 'registry', el });
     } else if (m.fieldClass === 'narrative') {
       action = 'rewrite';
     } else {
       // 认不出来就不动。硬猜一个登记字段填错的代价，是一份写着别人手机号的申请。
       action = 'skip';
+      // 但要记下来：认不出的字段里有一大半是「政治面貌」这种我们没定义过的
+      const label = el.label ?? el.placeholder;
+      if (label?.trim()) missing.push({ key: undefined, label: label.trim(), cls: 'registry', el });
     }
 
     fields.push({
@@ -150,6 +165,21 @@ export function planForm(
       learned: Boolean(memo),
       required: Boolean(el.required),
     });
+  }
+
+  // 记账放在最后、且只记一次：计划可能被反复重算（页面一变就要重 snapshot），
+  // 每次都 +1 会让 seen_count 变成「重算了几次」而不是「被几个站问过」。
+  if (opts.recordMissing) {
+    for (const m of missing) {
+      try {
+        recordMissingField(db, {
+          key: m.key, label: m.label, fieldClass: m.cls, domain,
+          example: m.el.placeholder ?? m.el.nearby ?? undefined,
+        });
+      } catch {
+        /* 记不上不该让填表失败 */
+      }
+    }
   }
 
   const summary = {

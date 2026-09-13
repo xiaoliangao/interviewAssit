@@ -117,6 +117,8 @@ function createWindow(): BrowserWindow {
         await sleep(1500);
         out.jobs = main();
         out.rows = document.querySelectorAll('tbody tr').length;
+        out.channels = [...document.querySelectorAll('.chhead h2')].map(h => h.innerText).join(' / ');
+        out.companies = document.querySelectorAll('.cohead').length;
         const row = document.querySelector('tbody tr');
         row && row.click();
         await sleep(1200);
@@ -124,10 +126,15 @@ function createWindow(): BrowserWindow {
         document.querySelector('.drawer-backdrop')?.click();
         await sleep(300);
 
+        go('设置');
+        await sleep(1500);
+        out.settings = [...document.querySelectorAll('main .card h2')].map(h => h.innerText).join(' / ');
+
         go('事实库');
         await sleep(1200);
         out.facts = [...document.querySelectorAll('main .card h2')].map(h => h.innerText).join(' / ');
         out.factsInputs = document.querySelectorAll('main input, main select').length;
+        out.factsStars = document.querySelectorAll('main .req').length;
 
         go('投递管线');
         await sleep(1200);
@@ -162,8 +169,10 @@ function createWindow(): BrowserWindow {
             log(`ui-check 今日 ${String(r.today).length} 字符`);
             log(`ui-check 岗位池 ${r.rows} 行\n${String(r.jobs).slice(0, 700)}`);
             log(`ui-check 详情抽屉：\n${String(r.drawer).slice(0, 600)}`);
+            log(`ui-check 岗位池分组：${String(r.channels)} · ${r.companies} 家公司`);
+            log(`ui-check 设置：${String(r.settings)}`);
             log(`ui-check 事实库：${String(r.facts)}`);
-            log(`ui-check 事实库可编辑控件 ${r.factsInputs} 个`);
+            log(`ui-check 事实库可编辑控件 ${r.factsInputs} 个 · 必填星标 ${r.factsStars} 个`);
             log(`ui-check 投递管线：${String(r.apply)}`);
             log(`ui-check 题库：${String(r.drill)}`);
             log(`ui-check 面试录音（main 尾部）：\n${String(r.interview)}`);
@@ -174,6 +183,8 @@ function createWindow(): BrowserWindow {
             // 岗位数可以为 0（新库就是 0），但同意闸门必须存在且默认拦住。
             const gateOk =
               Number(r.factsInputs) > 10 &&
+              Number(r.factsStars) > 0 &&
+              Number(r.companies) > 0 &&
               r.hasConsent === true &&
               r.startDisabledBeforeConsent === true &&
               r.startDisabledAfterConsent === false;

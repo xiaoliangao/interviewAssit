@@ -21,6 +21,7 @@ const api = {
   jobs: (filter: JobFilter) => invoke<JobRow[]>('jobs:query', filter),
   jobDetail: (jobId: string) => invoke<JobDetail | null>('jobs:detail', jobId),
   facets: () => invoke<Facets>('jobs:facets'),
+  jobsGrouped: (filter: JobFilter) => invoke<ChannelGroup[]>('jobs:grouped', filter),
   ignore: (jobId: string, reason: string, score: number | null) =>
     invoke<boolean>('jobs:ignore', jobId, reason, score),
   unignore: (jobId: string) => invoke<boolean>('jobs:unignore', jobId),
@@ -58,6 +59,9 @@ const api = {
   factsSaveProfile: (d: ProfileDraft) => invoke<SaveResult>('facts:save-profile', d),
   factsSaveRubric: (d: RubricDraft) => invoke<SaveResult>('facts:save-rubric', d),
   factsSync: () => invoke<SyncReport>('facts:sync'),
+  factsFieldStatus: (key: string, status: 'pending' | 'filled' | 'ignored') =>
+    invoke<boolean>('facts:field-status', key, status),
+  settings: () => invoke<SettingsView>('settings:read'),
 
   openExternal: (url: string) => invoke<boolean>('shell:open', url),
   reveal: (p: string) => invoke<boolean>('shell:reveal', p),
@@ -351,10 +355,58 @@ export interface SyncReport {
 export interface FactsView {
   profile: ProfileDraft;
   profileFile: string;
+  fieldRequests: FieldRequest[];
   rubric: RubricDraft;
   rubricFile: string | null;
   claims: { id: string; fact: string; level: string; status: string }[];
   findings: Finding[];
+}
+
+export interface CompanyGroup {
+  companyId: string;
+  company: string;
+  count: number;
+  topScore: number | null;
+  applied: number;
+  jobs: JobRow[];
+}
+
+export interface ChannelGroup {
+  channel: string;
+  label: string;
+  hint: string;
+  count: number;
+  companies: CompanyGroup[];
+}
+
+export interface FieldRequest {
+  key: string;
+  label: string;
+  fieldClass: string;
+  firstDomain: string | null;
+  lastDomain: string | null;
+  seenCount: number;
+  example: string | null;
+  status: 'pending' | 'filled' | 'ignored';
+  firstSeenAt: string;
+  lastSeenAt: string;
+}
+
+export interface SettingsView {
+  providers: {
+    id: string;
+    kind: string;
+    model: string;
+    maxVisibility: 'public' | 'private' | 'nda';
+    credentialRef: string | null;
+    available: boolean;
+    detail: string;
+  }[];
+  routes: { task: string; provider: string; fallback: string[] }[];
+  dataDir: string;
+  dbPath: string;
+  registryDir: string;
+  dataPointer: string | null;
 }
 
 export interface TodaySummary {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import type { Facets, JobFilter, JobRow, SourceHealth, SourceRunResult } from '../../preload/index.js';
+import type { ChannelGroup, Facets, JobFilter, JobRow, SourceHealth, SourceRunResult } from '../../preload/index.js';
 import { JobDrawer } from './JobDrawer.js';
 
 /**
@@ -15,6 +15,11 @@ import { JobDrawer } from './JobDrawer.js';
  */
 export function JobPool(props: { onChanged: () => void }): JSX.Element {
   const [rows, setRows] = useState<JobRow[] | null>(null);
+  const [groups, setGroups] = useState<ChannelGroup[] | null>(null);
+  // 分组是默认视图：投递方式决定这个岗位要花你 30 秒还是 15 分钟，
+  // 而平铺的一张表把这件事完全藏起来了。
+  const [grouped, setGrouped] = useState(true);
+  const [open, setOpen] = useState<Record<string, boolean>>({});
   const [facets, setFacets] = useState<Facets | null>(null);
   const [sources, setSources] = useState<SourceHealth[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -27,6 +32,7 @@ export function JobPool(props: { onChanged: () => void }): JSX.Element {
 
   const load = useCallback(() => {
     window.assit.jobs(filter).then(setRows).catch((e: Error) => setError(e.message));
+    window.assit.jobsGrouped(filter).then(setGroups).catch(() => undefined);
     window.assit.facets().then(setFacets).catch(() => undefined);
     window.assit.sources().then(setSources).catch(() => undefined);
   }, [filter]);
@@ -147,6 +153,9 @@ export function JobPool(props: { onChanged: () => void }): JSX.Element {
             />
             含已忽略
           </label>
+          <button onClick={() => setGrouped((g) => !g)} title="按投递方式和公司分组 / 平铺一张表">
+            {grouped ? '平铺列表' : '分组视图'}
+          </button>
         </div>
 
         {error && <p className="err" style={{ marginBottom: 0 }}>{error}</p>}
@@ -209,7 +218,87 @@ export function JobPool(props: { onChanged: () => void }): JSX.Element {
       </div>
 
       <div className="card">
-        {rows === null ? (
+        {grouped ? (
+          groups === null ? (
+            <p className="spin">读取中…</p>
+          ) : groups.length === 0 ? (
+            <div className="empty">
+              没有岗位。点上面的「采集」，或者用 <code>assit ingest --clipboard</code> 粘一个进来。
+            </div>
+          ) : (
+            groups.map((g) => (
+              <div key={g.channel} className="chgroup">
+                <div className="chhead">
+                  <h2 style={{ margin: 0 }}>{g.label}</h2>
+                  <span className="tag">{g.count} 个</span>
+                  <span className="faint">{g.hint}</span>
+                </div>
+                {g.companies.map((co) => {
+                  const key = `${g.channel}/${co.companyId}`;
+                  // 只有一家公司时默认展开 —— 折叠一个只有一项的东西是纯摩擦
+                  const isOpen = open[key] ?? g.companies.length === 1;
+                  return (
+                    <div key={key} className="cogroup">
+                      <button
+                        className="cohead"
+                        onClick={() => setOpen((o) => ({ ...o, [key]: !isOpen }))}
+                      >
+                        <span className="caret">{isOpen ? '▾' : '▸'}</span>
+                        <b>{co.company}</b>
+                        <span className="faint">{co.count} 个岗位</span>
+                        {co.topScore !== null && <span className="score">最高 {co.topScore}</span>}
+                        {co.applied > 0 && <span className="tag good">已投 {co.applied}</span>}
+                      </button>
+                      {isOpen && (
+                        <table>
+                          <tbody>
+                            {co.jobs.map((j) => (
+                              <tr key={j.jobId} className={j.ignoredReason ? 'ignored' : ''} onClick={() => setOpenId(j.jobId)}>
+                                <td className="num" style={{ width: 70 }}>
+                                  <span className="score">{j.finalScore ?? '—'}</span>
+                                  {j.hardGaps.length > 0 && <span className="tag bad" title={j.hardGaps.join('；')}>⚑</span>}
+                                </td>
+                                <td>
+                                  <div>{j.title}</div>
+                                  <div>
+                                    {j.roleFamily && <span className="tag">{j.roleFamily}</span>}
+                                    {j.cappedBy && <span className="tag warn">被「{j.cappedBy}」封顶</span>}
+                                    {j.injectionFlags.length > 0 && (
+                                      <span className="tag bad" title={j.injectionFlags.join(' / ')}>JD 含可疑指令</span>
+                                    )}
+                                    {j.jdVersions > 1 && <span className="tag">JD 改过 {j.jdVersions - 1} 次</span>}
+                                    {j.applied && <span className="tag good">已投</span>}
+                                    {j.ignoredReason && <span className="tag">已忽略：{j.ignoredReason}</span>}
+                                  </div>
+                                </td>
+                                <td className="muted" style={{ width: 90 }}>{j.city ?? '—'}</td>
+                                <td className="muted" style={{ width: 110 }}>
+                                  {j.salaryRaw ?? <span className="faint">未披露</span>}
+                                </td>
+                                <td className="num" style={{ width: 70 }}>
+                                  {j.coverage === null ? <span className="faint">—</span> : (
+                                    <span className={j.coverage < 0.5 ? 'tag warn' : 'faint'}>
+                                      {Math.round(j.coverage * 100)}%
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="num" style={{ width: 70 }}>
+                                  <button onClick={(e) => { e.stopPropagation(); void (j.ignoredReason ? window.assit.unignore(j.jobId).then(load) : ignore(j)); }}>
+                                    {j.ignoredReason ? '恢复' : '忽略'}
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            ))
+          )
+        ) : rows === null ? (
           <p className="spin">读取中…</p>
         ) : rows.length === 0 ? (
           <div className="empty">
@@ -230,22 +319,14 @@ export function JobPool(props: { onChanged: () => void }): JSX.Element {
             </thead>
             <tbody>
               {rows.map((j) => (
-                <tr
-                  key={j.jobId}
-                  className={j.ignoredReason ? 'ignored' : ''}
-                  onClick={() => setOpenId(j.jobId)}
-                >
+                <tr key={j.jobId} className={j.ignoredReason ? 'ignored' : ''} onClick={() => setOpenId(j.jobId)}>
                   <td className="num">
                     <span className="score">{j.finalScore ?? '—'}</span>
                     {j.hardGaps.length > 0 && <span className="tag bad" title={j.hardGaps.join('；')}>⚑</span>}
                   </td>
                   <td className="num">
-                    {j.coverage === null ? (
-                      <span className="faint">—</span>
-                    ) : (
-                      <span className={j.coverage < 0.5 ? 'tag warn' : 'faint'}>
-                        {Math.round(j.coverage * 100)}%
-                      </span>
+                    {j.coverage === null ? <span className="faint">—</span> : (
+                      <span className={j.coverage < 0.5 ? 'tag warn' : 'faint'}>{Math.round(j.coverage * 100)}%</span>
                     )}
                   </td>
                   <td>
@@ -254,9 +335,7 @@ export function JobPool(props: { onChanged: () => void }): JSX.Element {
                       {j.roleFamily && <span className="tag">{j.roleFamily}</span>}
                       {j.cappedBy && <span className="tag warn">被「{j.cappedBy}」封顶</span>}
                       {j.injectionFlags.length > 0 && (
-                        <span className="tag bad" title={j.injectionFlags.join(' / ')}>
-                          JD 含可疑指令
-                        </span>
+                        <span className="tag bad" title={j.injectionFlags.join(' / ')}>JD 含可疑指令</span>
                       )}
                       {j.jdVersions > 1 && <span className="tag">JD 改过 {j.jdVersions - 1} 次</span>}
                       {j.applied && <span className="tag good">已投</span>}
@@ -267,25 +346,9 @@ export function JobPool(props: { onChanged: () => void }): JSX.Element {
                   <td className="muted">{j.salaryRaw ?? <span className="faint">未披露</span>}</td>
                   <td className="muted">{j.platforms.join('、')}</td>
                   <td className="num">
-                    {j.ignoredReason ? (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void window.assit.unignore(j.jobId).then(load);
-                        }}
-                      >
-                        恢复
-                      </button>
-                    ) : (
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          void ignore(j);
-                        }}
-                      >
-                        忽略
-                      </button>
-                    )}
+                    <button onClick={(e) => { e.stopPropagation(); void (j.ignoredReason ? window.assit.unignore(j.jobId).then(load) : ignore(j)); }}>
+                      {j.ignoredReason ? '恢复' : '忽略'}
+                    </button>
                   </td>
                 </tr>
               ))}

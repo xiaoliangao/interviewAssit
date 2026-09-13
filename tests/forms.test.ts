@@ -6,9 +6,13 @@ import {
   NarrativeNotApproved,
   applyPlan,
   classifyField,
+  fieldKeyFromLabel,
+  listFieldRequests,
   learnField,
   openDb,
   planForm,
+  reconcileFieldRequests,
+  setFieldRequestStatus,
   selectorOf,
   type BrowserBridge,
   type Db,
@@ -193,5 +197,64 @@ describe('执行：没有提交这条路径', () => {
     const r = await applyPlan(b, { tabId: 't', plan: p });
     expect(b.uploads).toEqual(['/tmp/r.pdf']);
     expect(r.snapshot['']).toBeUndefined();
+  });
+});
+
+// ── 反馈边：表单告诉档案缺什么 ────────────────────────────────────────────
+
+describe('填不上的字段回流到档案', () => {
+  const els: ElementRef[] = [
+    el({ ref: '@e1', label: '姓名', name: 'realname' }),
+    el({ ref: '@e2', label: '毕业院校', name: 'school' }), // 认得出，但档案里没有
+    el({ ref: '@e3', label: '政治面貌', name: 'zzmm' }),   // schema 里压根没有
+  ];
+
+  it('默认不记 —— 只算计划不该有副作用', () => {
+    planForm(db, 'jobs.example.com', 'u', els, { profileFields: { 'name.zh': '李工' } });
+    expect(listFieldRequests(db)).toHaveLength(0);
+  });
+
+  it('开了就把两类都记下来：认得出但没值的，和压根不认识的', () => {
+    planForm(db, 'jobs.example.com', 'u', els, {
+      profileFields: { 'name.zh': '李工' }, recordMissing: true,
+    });
+    const rs = listFieldRequests(db);
+    expect(rs.map((r) => r.key).sort()).toEqual(['school', '政治面貌']);
+    expect(rs.find((r) => r.key === '政治面貌')!.firstDomain).toBe('jobs.example.com');
+  });
+
+  it('被多个站问过就累加，排序按次数 —— 问得多的最值得补', () => {
+    planForm(db, 'a.com', 'u', els, { profileFields: {}, recordMissing: true });
+    planForm(db, 'b.com', 'u', [els[2]!], { profileFields: {}, recordMissing: true });
+    const top = listFieldRequests(db)[0]!;
+    expect(top.key).toBe('政治面貌');
+    expect(top.seenCount).toBe(2);
+    expect(top.lastDomain).toBe('b.com');
+  });
+
+  it('标了「不打算填」的不会因为又被问一次就跳回待办', () => {
+    planForm(db, 'a.com', 'u', els, { profileFields: {}, recordMissing: true });
+    setFieldRequestStatus(db, '政治面貌', 'ignored');
+    planForm(db, 'b.com', 'u', els, { profileFields: {}, recordMissing: true });
+    expect(listFieldRequests(db).find((r) => r.key === '政治面貌')!.status).toBe('ignored');
+  });
+
+  it('档案里填上了就自动标成已填，清空了会变回待填', () => {
+    // profileFields 全空，所以三个都会被记下来（姓名也没填）
+    planForm(db, 'a.com', 'u', els, { profileFields: {}, recordMissing: true });
+    expect(listFieldRequests(db, 'pending')).toHaveLength(3);
+
+    expect(reconcileFieldRequests(db, { school: '某某大学' })).toBe(1);
+    expect(listFieldRequests(db, 'pending').map((r) => r.key).sort()).toEqual(['name.zh', '政治面貌']);
+
+    reconcileFieldRequests(db, {});
+    expect(listFieldRequests(db, 'pending')).toHaveLength(3);
+  });
+
+  it('字段名归一化只去噪，不做同义词合并 —— 合错了会往一个字段填另一个的值', () => {
+    expect(fieldKeyFromLabel(' 政治面貌： ')).toBe('政治面貌');
+    expect(fieldKeyFromLabel('请输入手机号*')).toBe('手机号');
+    // 「手机」和「联系电话」看起来该合并，但我们不知道这个站把它们当一个还是两个
+    expect(fieldKeyFromLabel('手机')).not.toBe(fieldKeyFromLabel('联系电话'));
   });
 });

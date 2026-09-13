@@ -3,11 +3,12 @@ import type { AppContext } from '../preload/index.js';
 import { Apply } from './panels/Apply.js';
 import { Drill } from './panels/Drill.js';
 import { Facts } from './panels/Facts.js';
+import { Settings } from './panels/Settings.js';
 import { Interview } from './panels/Interview.js';
 import { JobPool } from './panels/JobPool.js';
 import { Today } from './panels/Today.js';
 
-type PanelId = 'today' | 'jobs' | 'apply' | 'facts' | 'interview' | 'drill';
+type PanelId = 'today' | 'jobs' | 'apply' | 'facts' | 'interview' | 'drill' | 'settings';
 
 /**
  * 六个面板是最终形态，但按阶段落地（见 docs/DESIGN.md §14）。
@@ -84,36 +85,34 @@ export function App(): JSX.Element {
             <span>题库 & 复习</span>
           </button>
 
+          <div className="spacer" />
+          <button
+            className={`nav-item ${panel === 'settings' ? 'active' : ''}`}
+            onClick={() => setPanel('settings')}
+          >
+            <span>设置</span>
+          </button>
         </nav>
 
+        {/*
+          左下角只留「还差什么」这一件事。
+          原来那块堆的是 rubric/profile 版本和数据目录 —— 那是**运营与配置数据**，
+          现在在设置页。一个你每天都看见但几乎从不需要的角落，
+          不如用来显示唯一一件需要你行动的事。
+        */}
         <div className="ctx">
           {ctxError ? (
             <span className="err">{ctxError}</span>
           ) : ctx ? (
-            <>
-              <div>
-                事实库 {ctx.factsOk ? <span className="tag good">正常</span> : <span className="tag bad">{ctx.factsErrors} 个错误</span>}
-              </div>
-              <div>主张 {ctx.claimCount} 条 · 采集源 {ctx.sourceCount} 个</div>
-              <div>
-                rubric{' '}
-                {ctx.rubricVersion ? (
-                  <code>{ctx.rubricVersion}</code>
-                ) : (
-                  <span className="tag bad">未配置</span>
-                )}
-              </div>
-              <div>
-                profile <code>{ctx.profileVersion.replace('facts-', '')}</code>
-              </div>
-              <div
-                style={{ marginTop: 6, cursor: 'pointer' }}
-                onClick={() => void window.assit.reveal(ctx.dbPath)}
-                title="在访达中显示"
-              >
-                <code>{ctx.dataDir}</code>
-              </div>
-            </>
+            ctx.factsOk && ctx.rubricVersion ? (
+              <span className="faint">档案与打分规则就绪</span>
+            ) : (
+              <button className="todo" onClick={() => setPanel(ctx.factsOk ? 'settings' : 'facts')}>
+                {!ctx.factsOk && <div><span className="tag bad">{ctx.factsErrors}</span> 项必填还没写</div>}
+                {!ctx.rubricVersion && <div><span className="tag bad">!</span> 打分规则不可用</div>}
+                <div className="faint">点这里去处理</div>
+              </button>
+            )
           ) : (
             <span className="spin">读取中…</span>
           )}
@@ -145,6 +144,7 @@ export function App(): JSX.Element {
         {panel === 'interview' && <Interview onRecordingChange={setRecording} />}
         {panel === 'facts' && <Facts key={`f${reloadKey}`} onChanged={refreshAll} />}
         {panel === 'drill' && <Drill key={`d${reloadKey}`} />}
+        {panel === 'settings' && <Settings ctx={ctx} />}
       </main>
     </div>
   );

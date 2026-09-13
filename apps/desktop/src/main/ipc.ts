@@ -1,13 +1,17 @@
 import { ipcMain, shell } from 'electron';
 import {
+  DEFAULT_PROVIDERS,
+  DEFAULT_ROUTES,
   appendChunk,
   applicationSnapshot,
   claimDrillStats,
   currentProfileVersion,
   drillBoard,
   dueToday,
+  buildProvider,
   facets,
   funnel,
+  groupedJobs,
   gradeQuestion,
   ignoreJob,
   jobDetail,
@@ -17,7 +21,9 @@ import {
   loadFactsOrThrow,
   loadSources,
   openDb,
+  listFieldRequests,
   pipeline,
+  readDataPointer,
   readProfileDraft,
   readRubricDraft,
   preflight,
@@ -27,9 +33,11 @@ import {
   recordApplication,
   recoverStale,
   runSource,
+  reconcileFieldRequests,
   saveProfileDraft,
   saveRubricDraft,
   scoreAllJobs,
+  setFieldRequestStatus,
   setRecordingJob,
   setRecordingKeep,
   sourceHealth,
@@ -139,6 +147,7 @@ export function registerIpc(): void {
   handle('jobs:query', (filter: JobFilter) => queryJobs(getDb(), versions(), filter ?? {}));
   handle('jobs:detail', (jobId: string) => jobDetail(getDb(), versions(), jobId));
   handle('jobs:facets', () => facets(getDb()));
+  handle('jobs:grouped', (filter: JobFilter) => groupedJobs(getDb(), versions(), filter ?? {}));
 
   handle('jobs:ignore', (jobId: string, reason: string, score: number | null) => {
     ignoreJob(getDb(), jobId, reason, score);
@@ -265,17 +274,61 @@ export function registerIpc(): void {
     return {
       profile: readProfileDraft(),
       profileFile: paths.profile,
+      fieldRequests: listFieldRequests(getDb()),
       rubric: rubric.profile,
       rubricFile: rubric.file,
       claims,
       findings: validation.findings,
     };
   });
-  handle('facts:save-profile', (draft: any) => saveProfileDraft(draft));
+  handle('facts:save-profile', (draft: any) => {
+    const r = saveProfileDraft(draft);
+    // 存完对一次账：填上的标成已填，被清空的变回待填。
+    // 「待填写」的真源是档案文件里有没有值，不是那张提醒表。
+    reconcileFieldRequests(getDb(), draft.fields ?? {});
+    return r;
+  });
+  handle('facts:field-status', (key: string, status: 'pending' | 'filled' | 'ignored') => {
+    setFieldRequestStatus(getDb(), key, status);
+    return true;
+  });
   handle('facts:save-rubric', (draft: any) => saveRubricDraft(draft));
   // 同步是「文件 → SQLite」。档案不合法时 loadFactsOrThrow 会拒绝，
   // 错误信息直接回到界面上 —— 那正是你要修的东西。
   handle('facts:sync', () => syncFacts(getDb(), loadFactsOrThrow()));
+
+  // ── 设置（DESIGN §10）─────────────────────────────────────────────────
+  handle('settings:read', async () => {
+    const providers = [];
+    for (const spec of DEFAULT_PROVIDERS) {
+      let available = false;
+      let detail = '';
+      try {
+        available = await buildProvider(spec).isAvailable();
+      } catch (e) {
+        detail = (e as Error).message.slice(0, 160);
+      }
+      providers.push({
+        id: spec.id,
+        kind: spec.kind,
+        model: spec.model,
+        maxVisibility: spec.max_visibility,
+        credentialRef: (spec as { credential_ref?: string }).credential_ref ?? null,
+        available,
+        detail,
+      });
+    }
+    return {
+      providers,
+      routes: Object.entries(DEFAULT_ROUTES).map(([task, r]) => ({
+        task, provider: r.provider, fallback: r.fallback,
+      })),
+      dataDir: paths.data,
+      dbPath: paths.db,
+      registryDir: paths.registry,
+      dataPointer: readDataPointer(),
+    };
+  });
 
   handle('shell:open', async (url: string) => {
     if (!/^https?:\/\//i.test(url)) throw new Error('只允许打开 http(s) 链接');

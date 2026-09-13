@@ -324,3 +324,98 @@ export function facets(db: Db): { roleFamilies: string[]; platforms: string[]; c
 export function unignoreJob(db: Db, jobId: string): void {
   db.prepare('DELETE FROM jobs_ignored WHERE job_id = ?').run(jobId);
 }
+
+// ── 按渠道 → 公司分组 ──────────────────────────────────────────────────────
+
+/**
+ * 投递渠道。**用 `apply_channel` 而不是 `platform` 分组。**
+ *
+ * 因为决定「这个岗位怎么投」的不是它从哪采来的，而是投出去要做什么动作：
+ * BOSS 是打招呼聊天，网申是填一张表。这两件事在你的日程上完全不同 ——
+ * 打招呼是 30 秒，网申是 15 分钟。按平台分组会把腾讯官网和 Greenhouse
+ * 拆成两堆，而它们对你是同一件事。
+ */
+export const CHANNEL_LABELS: Record<string, string> = {
+  chat: 'BOSS / 直聊',
+  form: '网申表单',
+  email: '邮件投递',
+  external: '跳转外部',
+  unknown: '方式未知',
+};
+
+export const CHANNEL_HINTS: Record<string, string> = {
+  chat: '打招呼即可，一次约 30 秒 —— 但要登录态，走通道 B',
+  form: '要填一张表，一次约 15 分钟。自动填表能省掉大半',
+  email: '发邮件附简历',
+  external: '跳到公司自己的系统',
+  unknown: '采集时没能判断出投递方式',
+};
+
+export interface CompanyGroup {
+  companyId: string;
+  company: string;
+  count: number;
+  /** 这家公司里最高的分数。分组要按它排 —— 你关心的是「哪家有好岗位」 */
+  topScore: number | null;
+  applied: number;
+  jobs: JobRow[];
+}
+
+export interface ChannelGroup {
+  channel: string;
+  label: string;
+  hint: string;
+  count: number;
+  companies: CompanyGroup[];
+}
+
+/**
+ * 岗位池的分组视图：渠道 → 公司 → 岗位。
+ *
+ * 复用 `queryJobs` 而不是另写一条 SQL —— 排序规则（不乘 coverage、
+ * 硬门槛沉底）和筛选逻辑只该有一处实现，两份必然漂移。
+ */
+export function groupedJobs(db: Db, v: Versions, filter: JobFilter = {}): ChannelGroup[] {
+  const rows = queryJobs(db, v, { ...filter, limit: filter.limit ?? 500 });
+
+  const chanOf = new Map(
+    (db.prepare(
+      `SELECT job_id, COALESCE(MAX(apply_channel), 'unknown') ch FROM postings GROUP BY job_id`,
+    ).all() as { job_id: string; ch: string }[]).map((r) => [r.job_id, r.ch || 'unknown']),
+  );
+  const companyOf = new Map(
+    (db.prepare('SELECT j.id, j.company_id, c.canonical_name FROM jobs j JOIN companies c ON c.id = j.company_id')
+      .all() as { id: string; company_id: string; canonical_name: string }[])
+      .map((r) => [r.id, { id: r.company_id, name: r.canonical_name }]),
+  );
+
+  const byChannel = new Map<string, Map<string, CompanyGroup>>();
+  for (const j of rows) {
+    const ch = chanOf.get(j.jobId) ?? 'unknown';
+    const co = companyOf.get(j.jobId) ?? { id: 'unknown', name: j.company };
+    if (!byChannel.has(ch)) byChannel.set(ch, new Map());
+    const companies = byChannel.get(ch)!;
+    if (!companies.has(co.id)) {
+      companies.set(co.id, { companyId: co.id, company: co.name, count: 0, topScore: null, applied: 0, jobs: [] });
+    }
+    const g = companies.get(co.id)!;
+    g.jobs.push(j);
+    g.count += 1;
+    if (j.applied) g.applied += 1;
+    if (j.finalScore !== null && (g.topScore === null || j.finalScore > g.topScore)) g.topScore = j.finalScore;
+  }
+
+  return [...byChannel.entries()]
+    .map(([channel, companies]) => ({
+      channel,
+      label: CHANNEL_LABELS[channel] ?? channel,
+      hint: CHANNEL_HINTS[channel] ?? '',
+      count: [...companies.values()].reduce((a, c) => a + c.count, 0),
+      // 公司按「最高分」排，不按岗位数 —— 一家有 1 个 85 分的岗位，
+      // 比一家有 20 个 40 分的岗位值得先看。
+      companies: [...companies.values()].sort(
+        (a, b) => (b.topScore ?? -1) - (a.topScore ?? -1) || b.count - a.count,
+      ),
+    }))
+    .sort((a, b) => b.count - a.count);
+}

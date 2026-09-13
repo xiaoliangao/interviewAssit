@@ -221,3 +221,76 @@ a { color: var(--accent); }
   vertical-align: middle;
   min-width: 2px;
 }
+
+/* ── 事实库：网申表单的样子 ──────────────────────────────────────────── */
+
+.formtable td { vertical-align: top; padding: 7px 8px; }
+.flabel {
+  width: 140px;
+  color: #5a6472;
+  white-space: nowrap;
+  padding-top: 12px !important;
+}
+.req { color: #e74c3c; margin-left: 3px; font-weight: 700; }
+.pending {
+  flex: none;
+  font-size: 11px;
+  color: #b06a00;
+  background: #fff4e0;
+  border: 1px solid #f0d08a;
+  border-radius: 3px;
+  padding: 2px 6px;
+  white-space: nowrap;
+}
+input.full, select.full { flex: 1; min-width: 160px; }
+.chk { display: flex; gap: 4px; align-items: center; white-space: nowrap; }
+.reccard {
+  border: 1px solid #e6e9ed;
+  border-radius: 6px;
+  padding: 10px;
+  margin-top: 8px;
+  background: #fcfdfe;
+}
+
+/* ── 岗位池分组 ─────────────────────────────────────────────────────── */
+
+.chgroup { margin-bottom: 18px; }
+.chhead {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0 8px;
+  border-bottom: 2px solid #e6e9ed;
+  margin-bottom: 6px;
+}
+.cogroup { margin: 2px 0 6px; }
+.cohead {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  width: 100%;
+  text-align: left;
+  background: #f4f6f8;
+  border: 1px solid #e6e9ed;
+  border-radius: 5px;
+  padding: 7px 10px;
+  cursor: pointer;
+}
+.cohead:hover { background: #eef1f5; }
+.caret { color: #8a94a3; width: 12px; }
+.cogroup table { margin: 0 0 4px; }
+.cogroup td { padding: 6px 8px; }
+
+/* 左下角的待办按钮 */
+.todo {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: #fff4f2;
+  border: 1px solid #f0c0b8;
+  border-radius: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  line-height: 1.7;
+}
+.todo:hover { background: #ffeae6; }
